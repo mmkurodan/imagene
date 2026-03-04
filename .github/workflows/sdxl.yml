@@ -46,14 +46,14 @@ jobs:
         # PyTorch CPU
         pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
         
-        # SDXL + HuggingFace
+        # HuggingFace stack
         pip install diffusers transformers accelerate safetensors hf_transfer
         
         # ONNX toolchain
-        pip install onnx onnxsim onnxruntime onnxconverter-common
+        pip install onnx onnxruntime onnxsim onnxconverter-common
         
-        # ★ 重要：onnxscript を追加（これが無いと export が必ず失敗）
-        pip install onnxscript
+        # ★ SDXL ONNX exporter（必須）
+        pip install "optimum[onnxruntime]"
     
     - name: Cache HuggingFace models
       uses: actions/cache@v4
@@ -67,9 +67,7 @@ jobs:
       run: |
         python scripts/export_sdxl_onnx.py \
           --model-id stabilityai/stable-diffusion-xl-base-1.0 \
-          --output-dir ${{ env.ONNX_DIR }} \
-          --device cpu \
-          --fp16-unet
+          --output-dir ${{ env.ONNX_DIR }}
       env:
         HF_TOKEN: ${{ secrets.HF_TOKEN }}
     
@@ -83,7 +81,7 @@ jobs:
   optimize-onnx:
     runs-on: ubuntu-latest
     needs: export-onnx
-    if: always() && (needs.export-onnx.result == 'success' || inputs.skip_export)
+    if: needs.export-onnx.result == 'success'
     
     steps:
     - uses: actions/checkout@v4
@@ -100,19 +98,10 @@ jobs:
         pip install onnx onnxruntime onnxruntime-tools
     
     - name: Download raw ONNX models
-      if: ${{ !inputs.skip_export }}
       uses: actions/download-artifact@v4
       with:
         name: sdxl-onnx-raw
         path: ${{ env.ONNX_DIR }}
-    
-    - name: Download cached ONNX models
-      if: ${{ inputs.skip_export }}
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.ONNX_DIR }}
-        key: sdxl-onnx-cached
-        fail-on-cache-miss: true
     
     - name: Optimize ONNX models
       run: |
@@ -132,6 +121,7 @@ jobs:
   build-android:
     runs-on: ubuntu-latest
     needs: optimize-onnx
+    if: needs.optimize-onnx.result == 'success'
     
     steps:
     - uses: actions/checkout@v4
@@ -162,6 +152,7 @@ jobs:
         mkdir -p app/src/main/assets/models
         
         cp onnx_models/*.onnx app/src/main/assets/models/
+        cp onnx_models/*.data* app/src/main/assets/models/ || true
         cp -r onnx_models/tokenizer_1 app/src/main/assets/models/ || true
         cp -r onnx_models/tokenizer_2 app/src/main/assets/models/ || true
         cp -r onnx_models/scheduler app/src/main/assets/models/ || true
