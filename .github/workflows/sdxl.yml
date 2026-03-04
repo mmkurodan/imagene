@@ -42,7 +42,6 @@ jobs:
     - name: Install dependencies
       run: |
         pip install --upgrade pip
-        
         pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
         pip install diffusers transformers accelerate safetensors hf_transfer
         pip install onnx onnxruntime onnxsim onnxconverter-common
@@ -129,14 +128,35 @@ jobs:
     - name: Prepare assets
       run: |
         mkdir -p app/src/main/assets/models
-        
-        cp onnx_models/*.onnx app/src/main/assets/models/ || true
-        cp onnx_models/*.data* app/src/main/assets/models/ || true
-        cp -r onnx_models/tokenizer_1 app/src/main/assets/models/ || true
+
+        # UNet
+        cp onnx_models/unet/*.onnx app/src/main/assets/models/ || true
+        cp onnx_models/unet/*.data* app/src/main/assets/models/ || true
+
+        # Text Encoder 1
+        cp onnx_models/text_encoder/*.onnx app/src/main/assets/models/ || true
+        cp onnx_models/text_encoder/*.data* app/src/main/assets/models/ || true
+
+        # Text Encoder 2
+        cp onnx_models/text_encoder_2/*.onnx app/src/main/assets/models/ || true
+        cp onnx_models/text_encoder_2/*.data* app/src/main/assets/models/ || true
+
+        # VAE Decoder
+        cp onnx_models/vae_decoder/*.onnx app/src/main/assets/models/ || true
+        cp onnx_models/vae_decoder/*.data* app/src/main/assets/models/ || true
+
+        # VAE Encoder（SDXL では未使用だが保持）
+        cp onnx_models/vae_encoder/*.onnx app/src/main/assets/models/ || true
+        cp onnx_models/vae_encoder/*.data* app/src/main/assets/models/ || true
+
+        # Tokenizers / Scheduler
+        cp -r onnx_models/tokenizer app/src/main/assets/models/ || true
         cp -r onnx_models/tokenizer_2 app/src/main/assets/models/ || true
         cp -r onnx_models/scheduler app/src/main/assets/models/ || true
-        cp onnx_models/manifest.json app/src/main/assets/models/ || true
-        
+
+        # Model index
+        cp onnx_models/model_index.json app/src/main/assets/models/ || true
+
         echo "Assets prepared:"
         find app/src/main/assets -type f -exec ls -lh {} \;
     
