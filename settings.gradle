@@ -1,0 +1,2 @@
+rootProject.name = "imagene"
+include ':app'
