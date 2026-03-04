@@ -50,12 +50,7 @@ def export_text_encoder(encoder, tokenizer, output_path: str, name: str, max_len
         output_path,
         input_names=["input_ids"],
         output_names=["last_hidden_state", "pooler_output"],
-        dynamic_axes={
-            "input_ids": {0: "batch_size"},
-            "last_hidden_state": {0: "batch_size"},
-            "pooler_output": {0: "batch_size"},
-        },
-        opset_version=17,
+        opset_version=16,
         do_constant_folding=True,
     )
     
@@ -122,7 +117,7 @@ def export_unet(unet, output_path: str, fp16: bool = True):
         output_path,
         input_names=["sample", "timestep", "encoder_hidden_states", "text_embeds", "time_ids"],
         output_names=["out_sample"],
-        opset_version=17,
+        opset_version=16,
         do_constant_folding=True,
     )
     
@@ -170,11 +165,7 @@ def export_vae_decoder(vae, output_path: str):
         output_path,
         input_names=["latent"],
         output_names=["image"],
-        dynamic_axes={
-            "latent": {0: "batch_size", 2: "height", 3: "width"},
-            "image": {0: "batch_size", 2: "height", 3: "width"},
-        },
-        opset_version=17,
+        opset_version=16,
         do_constant_folding=True,
     )
     
