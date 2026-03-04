@@ -8,10 +8,15 @@ android {
 
     defaultConfig {
         applicationId "com.micklab.imagene"
-        minSdk 24
+        minSdk 26
         targetSdk 35
         versionCode 1
         versionName "1.0"
+        
+        // Limit ABI to arm64-v8a for Snapdragon 8 Elite
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
     }
 
     buildTypes {
@@ -19,7 +24,38 @@ android {
             minifyEnabled false
         }
     }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    
+    // Disable compression for ONNX files in assets
+    androidResources {
+        noCompress 'onnx'
+    }
+    
+    // Handle large model files
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+}
+
+repositories {
+    flatDir {
+        dirs 'libs'
+    }
 }
 
 dependencies {
+    // ONNX Runtime Mobile
+    implementation 'com.microsoft.onnxruntime:onnxruntime-mobile:1.17.0'
+    
+    // Fallback: local AAR if Maven unavailable
+    // implementation(name: 'onnxruntime-mobile', ext: 'aar')
+    
+    // JSON parsing for manifest
+    implementation 'com.google.code.gson:gson:2.10.1'
 }
