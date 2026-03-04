@@ -65,24 +65,33 @@ def export_text_encoder(encoder, tokenizer, output_path: str, name: str, max_len
 
 
 def export_unet(unet, output_path: str, fp16: bool = True):
-    """Export UNet to ONNX with optional FP16 conversion."""
+    """Export UNet to ONNX with optional FP16 conversion using fully static shapes (no dynamic_axes)."""
     print("Exporting UNet...")
     
     unet.eval()
     unet.set_attn_processor(AttnProcessor2_0())
     
-    # SDXL UNet input shapes
+    # Fixed SDXL UNet input shapes (static)
     batch_size = 1
     latent_channels = 4
-    latent_height = 128  # 1024 / 8
+    latent_height = 128  # SDXL: 1024 / 8
     latent_width = 128
     
-    # Dummy inputs
-    sample = torch.randn(batch_size, latent_channels, latent_height, latent_width)
-    timestep = torch.tensor([1.0])
-    encoder_hidden_states = torch.randn(batch_size, 77, 2048)
-    added_cond_kwargs_text_embeds = torch.randn(batch_size, 1280)
-    added_cond_kwargs_time_ids = torch.randn(batch_size, 6)
+    # Determine device and dtype from model parameters so dummy inputs match the model
+    try:
+        param = next(unet.parameters())
+        device = param.device
+        model_dtype = param.dtype
+    except StopIteration:
+        device = torch.device("cpu")
+        model_dtype = torch.float32
+    
+    # Dummy inputs (fixed shapes, placed on model device and dtype)
+    sample = torch.randn(batch_size, latent_channels, latent_height, latent_width, device=device, dtype=model_dtype)
+    timestep = torch.tensor([1.0], device=device, dtype=model_dtype)
+    encoder_hidden_states = torch.randn(batch_size, 77, 2048, device=device, dtype=model_dtype)
+    added_cond_kwargs_text_embeds = torch.randn(batch_size, 1280, device=device, dtype=model_dtype)
+    added_cond_kwargs_time_ids = torch.randn(batch_size, 6, device=device, dtype=model_dtype)
     
     # Wrapper class for SDXL UNet with added conditions
     class UNetWrapper(torch.nn.Module):
@@ -106,21 +115,13 @@ def export_unet(unet, output_path: str, fp16: bool = True):
     wrapper = UNetWrapper(unet)
     wrapper.eval()
     
-    # Export
+    # Export with fully fixed (static) shapes — DO NOT use dynamic_axes
     torch.onnx.export(
         wrapper,
-        (sample, timestep, encoder_hidden_states, 
-         added_cond_kwargs_text_embeds, added_cond_kwargs_time_ids),
+        (sample, timestep, encoder_hidden_states, added_cond_kwargs_text_embeds, added_cond_kwargs_time_ids),
         output_path,
         input_names=["sample", "timestep", "encoder_hidden_states", "text_embeds", "time_ids"],
         output_names=["out_sample"],
-        dynamic_axes={
-            "sample": {0: "batch_size", 2: "height", 3: "width"},
-            "encoder_hidden_states": {0: "batch_size", 1: "sequence_length"},
-            "text_embeds": {0: "batch_size"},
-            "time_ids": {0: "batch_size"},
-            "out_sample": {0: "batch_size", 2: "height", 3: "width"},
-        },
         opset_version=17,
         do_constant_folding=True,
     )
