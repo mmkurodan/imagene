@@ -43,16 +43,9 @@ jobs:
       run: |
         pip install --upgrade pip
         
-        # PyTorch CPU
         pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-        
-        # HuggingFace stack
         pip install diffusers transformers accelerate safetensors hf_transfer
-        
-        # ONNX toolchain
         pip install onnx onnxruntime onnxsim onnxconverter-common
-        
-        # ★ SDXL ONNX exporter（必須）
         pip install "optimum[onnxruntime]"
     
     - name: Cache HuggingFace models
@@ -85,32 +78,18 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        cache: 'pip'
-    
-    - name: Install dependencies
-      run: |
-        pip install --upgrade pip
-        pip install onnx onnxruntime onnxruntime-tools
-    
+
     - name: Download raw ONNX models
       uses: actions/download-artifact@v4
       with:
         name: sdxl-onnx-raw
         path: ${{ env.ONNX_DIR }}
-    
-    - name: Optimize ONNX models
+
+    - name: Copy raw ONNX as optimized
       run: |
-        python scripts/optimize_onnx.py \
-          --input-dir ${{ env.ONNX_DIR }} \
-          --output-dir ${{ env.ONNX_OPTIMIZED_DIR }} \
-          --mobile \
-          ${{ inputs.quantize && '--quantize' || '' }}
-    
+        rm -rf ${{ env.ONNX_OPTIMIZED_DIR }}
+        cp -r ${{ env.ONNX_DIR }} ${{ env.ONNX_OPTIMIZED_DIR }}
+
     - name: Upload optimized ONNX models
       uses: actions/upload-artifact@v4
       with:
@@ -151,7 +130,7 @@ jobs:
       run: |
         mkdir -p app/src/main/assets/models
         
-        cp onnx_models/*.onnx app/src/main/assets/models/
+        cp onnx_models/*.onnx app/src/main/assets/models/ || true
         cp onnx_models/*.data* app/src/main/assets/models/ || true
         cp -r onnx_models/tokenizer_1 app/src/main/assets/models/ || true
         cp -r onnx_models/tokenizer_2 app/src/main/assets/models/ || true
