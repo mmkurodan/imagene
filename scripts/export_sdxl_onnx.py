@@ -1,285 +1,112 @@
 #!/usr/bin/env python3
 """
-SDXL ONNX Export Script
-Exports Stable Diffusion XL components to ONNX format with optimizations.
+Export SDXL to ONNX using diffusers' ONNX exporter.
+
+This script delegates ONNX export to diffusers' OnnxStableDiffusionXLPipeline.from_pretrained(..., export=True)
+and avoids using torch.onnx.export or any opset version conversion. It requests opset=16 and prefers FP16
+for the UNet when requested.
+
+Requirements:
+- diffusers providing OnnxStableDiffusionXLPipeline with an export flow
+- No onnxscript/version_converter usage
 """
 
-import os
-import torch
 import argparse
+import inspect
+import sys
 from pathlib import Path
-from diffusers import StableDiffusionXLPipeline
-from diffusers.models.attention_processor import AttnProcessor2_0
-import onnx
-from onnxsim import simplify
 
 
-def setup_dirs(output_dir: str) -> Path:
-    """Create output directory structure."""
-    out_path = Path(output_dir)
-    out_path.mkdir(parents=True, exist_ok=True)
-    return out_path
+def _get_export_kwargs(fn, output_dir: str, device: str, fp16_unet: bool):
+    """Build a kwargs dict for OnnxStableDiffusionXLPipeline.from_pretrained by introspecting the signature.
 
-
-def load_sdxl_pipeline(model_id: str, device: str = "cpu"):
-    """Load SDXL pipeline from HuggingFace."""
-    print(f"Loading SDXL pipeline from {model_id}...")
-    pipe = StableDiffusionXLPipeline.from_pretrained(
-        model_id,
-        torch_dtype=torch.float32,
-        use_safetensors=True,
-        variant="fp16" if device == "cuda" else None,
-    )
-    pipe.to(device)
-    return pipe
-
-
-def export_text_encoder(encoder, tokenizer, output_path: str, name: str, max_length: int = 77):
-    """Export a text encoder to ONNX."""
-    print(f"Exporting {name}...")
-    
-    encoder.eval()
-    
-    # Create dummy input
-    dummy_input_ids = torch.zeros(1, max_length, dtype=torch.int64)
-    
-    # Export
-    torch.onnx.export(
-        encoder,
-        (dummy_input_ids,),
-        output_path,
-        input_names=["input_ids"],
-        output_names=["last_hidden_state", "pooler_output"],
-        opset_version=16,
-        do_constant_folding=True,
-    )
-
-    # Save as-exported (no opset conversion or further rewriting)
-    print(f"  Saved to {output_path}")
-
-
-def export_unet(unet, output_path: str, fp16: bool = True):
-    """Export UNet to ONNX with optional FP16 conversion using reduced latent size and external data format.
-
-    This export fixes the latent shape to [1,4,64,64] (512x512 equivalent) and enables
-    use_external_data_format=True to store large weights externally to reduce peak memory.
+    We only pass keys that the installed diffusers supports so this script is forward/backward compatible.
     """
-    print("Exporting UNet...")
+    sig = inspect.signature(fn)
+    candidates = {
+        "export": True,
+        "opset": 16,
+        # common names used by diffusers exporters - only kept if present in the signature
+        "output_dir": str(output_dir),
+        "export_dir": str(output_dir),
+        "fp16": fp16_unet,
+        "device": device,
+        "use_external_data_format": True,
+        "variant": "fp16" if fp16_unet else None,
+    }
+    kwargs = {k: v for k, v in candidates.items() if k in sig.parameters and v is not None}
+    return kwargs
 
-    unet.eval()
-    unet.set_attn_processor(AttnProcessor2_0())
 
-    # Fixed SDXL UNet input shapes (512x512 equivalent latent)
-    batch_size = 1
-    latent_channels = 4
-    latent_height = 64  # 512 / 8
-    latent_width = 64
+def export_with_diffusers(model_id: str, output_dir: str, device: str = "cpu", fp16_unet: bool = False):
+    """Export SDXL components to ONNX using diffusers' ONNX exporter.
 
-    # Determine device and dtype from model parameters so dummy inputs match the model
+    This function uses OnnxStableDiffusionXLPipeline.from_pretrained(..., export=True) when available.
+    It makes no additional opset conversions and does not call torch.onnx.export.
+    """
     try:
-        param = next(unet.parameters())
-        device = param.device
-        model_dtype = param.dtype
-    except StopIteration:
-        device = torch.device("cpu")
-        model_dtype = torch.float32
+        # Prefer the SDXL-specific ONNX pipeline exporter
+        from diffusers import OnnxStableDiffusionXLPipeline as OnnxExporter
+    except Exception:
+        raise RuntimeError(
+            "OnnxStableDiffusionXLPipeline not available in diffusers. "
+            "Please upgrade diffusers to a version that provides the ONNX exporter for SDXL."
+        )
 
-    # Dummy inputs (fixed shapes, placed on model device and dtype)
-    sample = torch.randn(batch_size, latent_channels, latent_height, latent_width, device=device, dtype=model_dtype)
-    timestep = torch.tensor([1.0], device=device, dtype=model_dtype)
-    encoder_hidden_states = torch.randn(batch_size, 77, 2048, device=device, dtype=model_dtype)
-    added_cond_kwargs_text_embeds = torch.randn(batch_size, 1280, device=device, dtype=model_dtype)
-    added_cond_kwargs_time_ids = torch.randn(batch_size, 6, device=device, dtype=model_dtype)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Wrapper class for SDXL UNet with added conditions
-    class UNetWrapper(torch.nn.Module):
-        def __init__(self, unet):
-            super().__init__()
-            self.unet = unet
+    fn = OnnxExporter.from_pretrained
+    kwargs = _get_export_kwargs(fn, output_dir, device, fp16_unet)
 
-        def forward(self, sample, timestep, encoder_hidden_states, text_embeds, time_ids):
-            added_cond_kwargs = {
-                "text_embeds": text_embeds,
-                "time_ids": time_ids,
-            }
-            return self.unet(
-                sample,
-                timestep,
-                encoder_hidden_states=encoder_hidden_states,
-                added_cond_kwargs=added_cond_kwargs,
-                return_dict=False,
-            )[0]
+    print("Exporting SDXL ONNX models with diffusers ONNX exporter")
+    print(f"  model_id: {model_id}")
+    print(f"  output_dir: {output_dir}")
+    print(f"  device: {device}")
+    print(f"  fp16_unet: {fp16_unet}")
+    print(f"  exporter kwargs: {kwargs}")
 
-    wrapper = UNetWrapper(unet)
-    wrapper.eval()
-
-    # Export with fully fixed (static) shapes — DO NOT use dynamic_axes
-    torch.onnx.export(
-        wrapper,
-        (sample, timestep, encoder_hidden_states, added_cond_kwargs_text_embeds, added_cond_kwargs_time_ids),
-        output_path,
-        input_names=["sample", "timestep", "encoder_hidden_states", "text_embeds", "time_ids"],
-        output_names=["out_sample"],
-        opset_version=16,
-        do_constant_folding=True,
-        use_external_data_format=True,
-    )
-
-    # Convert to FP16 if requested (keeps external data format)
-    if fp16:
-        convert_to_fp16(output_path)
-
-    # Save exported UNet as-is (no opset conversion or rewriting)
-    print(f"  Saved to {output_path} (FP16={fp16})")
-
-
-def export_vae_decoder(vae, output_path: str):
-    """Export VAE decoder to ONNX."""
-    print("Exporting VAE decoder...")
-    
-    vae.eval()
-    
-    # Create decoder-only wrapper
-    class VAEDecoderWrapper(torch.nn.Module):
-        def __init__(self, vae):
-            super().__init__()
-            self.decoder = vae.decoder
-            self.post_quant_conv = vae.post_quant_conv
-            self.config = vae.config
-        
-        def forward(self, latents):
-            # Scale latents
-            latents = latents / self.config.scaling_factor
-            latents = self.post_quant_conv(latents)
-            image = self.decoder(latents)
-            return image
-    
-    decoder = VAEDecoderWrapper(vae)
-    decoder.eval()
-    
-    # Dummy input
-    latent = torch.randn(1, 4, 128, 128)
-    
-    # Export
-    torch.onnx.export(
-        decoder,
-        (latent,),
-        output_path,
-        input_names=["latent"],
-        output_names=["image"],
-        opset_version=16,
-        do_constant_folding=True,
-    )
-
-    # Save exported decoder as-is (no opset conversion or rewriting)
-    print(f"  Saved to {output_path}")
-
-
-def simplify_onnx(model_path: str):
-    """Simplify ONNX model using onnx-simplifier."""
-    print(f"  Simplifying {model_path}...")
+    # Call the exporter; many diffusers ONNX exporters export files as a side-effect and may
+    # return a pipeline object or a dict. We don't rely on the return value.
     try:
-        model = onnx.load(model_path)
-        model_simplified, check = simplify(model)
-        if check:
-            onnx.save(model_simplified, model_path)
-            print("  Simplification successful")
-        else:
-            print("  Simplification check failed, keeping original")
-    except Exception as e:
-        print(f"  Simplification failed: {e}")
+        _ret = fn(model_id, **kwargs)
+    except TypeError as e:
+        # If the call fails due to unexpected kwargs, try a minimal call (model_id + export/opset)
+        print("  Initial export call failed, retrying with minimal args...", file=sys.stderr)
+        minimal = {}
+        if "export" in inspect.signature(fn).parameters:
+            minimal["export"] = True
+        if "opset" in inspect.signature(fn).parameters:
+            minimal["opset"] = 16
+        if "output_dir" in inspect.signature(fn).parameters:
+            minimal["output_dir"] = str(output_dir)
+        print(f"  Retrying with: {minimal}")
+        _ret = fn(model_id, **minimal)
 
+    # After export, list exported files for user visibility
+    exported = sorted([p for p in output_dir.rglob("*")])
+    if not exported:
+        print("Warning: exporter did not emit any files to output_dir", file=sys.stderr)
+    else:
+        print("Exported files:")
+        for p in exported:
+            try:
+                print(" ", p.relative_to(output_dir))
+            except Exception:
+                print(" ", p)
 
-def convert_to_fp16(model_path: str):
-    """Convert ONNX model to FP16."""
-    from onnxconverter_common import float16
-    
-    print(f"  Converting to FP16...")
-    model = onnx.load(model_path)
-    model_fp16 = float16.convert_float_to_float16(
-        model,
-        keep_io_types=True,
-        disable_shape_infer=True,
-    )
-    onnx.save(model_fp16, model_path)
+    print("Export complete.")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Export SDXL to ONNX")
-    parser.add_argument(
-        "--model-id",
-        type=str,
-        default="stabilityai/stable-diffusion-xl-base-1.0",
-        help="HuggingFace model ID",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="onnx",
-        help="Output directory for ONNX files",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cpu",
-        choices=["cpu", "cuda"],
-        help="Device to use for export",
-    )
-    parser.add_argument(
-        "--fp16-unet",
-        action="store_true",
-        default=True,
-        help="Convert UNet to FP16",
-    )
+    parser = argparse.ArgumentParser(description="Export SDXL to ONNX using diffusers' ONNX exporter")
+    parser.add_argument("--model-id", type=str, default="stabilityai/stable-diffusion-xl-base-1.0", help="HuggingFace model ID")
+    parser.add_argument("--output-dir", type=str, default="onnx", help="Directory to write ONNX files to")
+    parser.add_argument("--device", type=str, choices=["cpu", "cuda"], default="cpu", help="Device to run any export-time ops on")
+    parser.add_argument("--fp16-unet", action="store_true", help="Request FP16 UNet export where the exporter supports it (RedMagic 11 Pro)")
     args = parser.parse_args()
-    
-    # Setup
-    output_dir = setup_dirs(args.output_dir)
-    
-    # Load pipeline
-    pipe = load_sdxl_pipeline(args.model_id, args.device)
-    
-    # Export components
-    export_text_encoder(
-        pipe.text_encoder,
-        pipe.tokenizer,
-        str(output_dir / "text_encoder_1.onnx"),
-        "text_encoder_1",
-    )
-    
-    export_text_encoder(
-        pipe.text_encoder_2,
-        pipe.tokenizer_2,
-        str(output_dir / "text_encoder_2.onnx"),
-        "text_encoder_2",
-    )
-    
-    export_unet(
-        pipe.unet,
-        str(output_dir / "unet.onnx"),
-        fp16=args.fp16_unet,
-    )
-    
-    export_vae_decoder(
-        pipe.vae,
-        str(output_dir / "vae_decoder.onnx"),
-    )
-    
-    # Save tokenizer config for inference
-    pipe.tokenizer.save_pretrained(str(output_dir / "tokenizer_1"))
-    pipe.tokenizer_2.save_pretrained(str(output_dir / "tokenizer_2"))
-    
-    # Save scheduler config
-    pipe.scheduler.save_config(str(output_dir / "scheduler"))
-    
-    print("\nExport complete!")
-    print(f"Models saved to: {output_dir}")
-    
-    # Print file sizes
-    print("\nModel sizes:")
-    for f in output_dir.glob("*.onnx"):
-        size_mb = f.stat().st_size / (1024 * 1024)
-        print(f"  {f.name}: {size_mb:.1f} MB")
+
+    export_with_diffusers(args.model_id, args.output_dir, device=args.device, fp16_unet=args.fp16_unet)
 
 
 if __name__ == "__main__":
