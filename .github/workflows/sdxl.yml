@@ -42,10 +42,18 @@ jobs:
     - name: Install dependencies
       run: |
         pip install --upgrade pip
+        
+        # PyTorch CPU
         pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-        pip install diffusers transformers accelerate safetensors
+        
+        # SDXL + HuggingFace
+        pip install diffusers transformers accelerate safetensors hf_transfer
+        
+        # ONNX toolchain
         pip install onnx onnxsim onnxruntime onnxconverter-common
-        pip install hf_transfer
+        
+        # ★ 重要：onnxscript を追加（これが無いと export が必ず失敗）
+        pip install onnxscript
     
     - name: Cache HuggingFace models
       uses: actions/cache@v4
@@ -153,28 +161,21 @@ jobs:
       run: |
         mkdir -p app/src/main/assets/models
         
-        # Copy ONNX models
         cp onnx_models/*.onnx app/src/main/assets/models/
-        
-        # Copy configs
         cp -r onnx_models/tokenizer_1 app/src/main/assets/models/ || true
         cp -r onnx_models/tokenizer_2 app/src/main/assets/models/ || true
         cp -r onnx_models/scheduler app/src/main/assets/models/ || true
         cp onnx_models/manifest.json app/src/main/assets/models/ || true
         
-        # List assets
         echo "Assets prepared:"
         find app/src/main/assets -type f -exec ls -lh {} \;
     
     - name: Download ONNX Runtime Mobile AAR
       run: |
         mkdir -p app/libs
-        
-        # Download ONNX Runtime Mobile AAR
         ONNX_VERSION="1.17.0"
         wget -q "https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-mobile/${ONNX_VERSION}/onnxruntime-mobile-${ONNX_VERSION}.aar" \
           -O app/libs/onnxruntime-mobile.aar
-        
         echo "Downloaded ONNX Runtime Mobile ${ONNX_VERSION}"
     
     - name: Build Release APK
