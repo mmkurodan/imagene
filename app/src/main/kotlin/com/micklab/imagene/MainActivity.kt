@@ -22,7 +22,7 @@ import androidx.core.app.ActivityCompat
 class MainActivity : AppCompatActivity() {
     
     companion object {
-        private const val REQUEST_CODE_MODEL_MISSING = 1001
+        private const val TAG = "MainActivity"
         private const val PERMISSION_REQUEST_CODE = 1002
     }
     
@@ -43,6 +43,8 @@ class MainActivity : AppCompatActivity() {
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLogStore.initialize(this)
+        AppLogStore.i(TAG, "MainActivity onCreate")
         setupLoadingUI()
         checkPermissionsAndModel()
     }
@@ -84,8 +86,10 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun checkPermissionsAndModel() {
+        AppLogStore.i(TAG, "Checking storage permission and model availability")
         // Check if we need storage permission (Android 12 and below)
         if (SdxlModelLoader.needsStoragePermission() && !SdxlModelLoader.hasStoragePermission(this)) {
+            AppLogStore.w(TAG, "Storage permission is missing; requesting permission")
             requestStoragePermission()
         } else {
             checkModelAndProceed()
@@ -94,6 +98,7 @@ class MainActivity : AppCompatActivity() {
     
     private fun requestStoragePermission() {
         statusText.text = "ストレージ権限を確認中..."
+        AppLogStore.i(TAG, "Requesting READ_EXTERNAL_STORAGE permission")
         
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             ActivityCompat.requestPermissions(
@@ -113,9 +118,11 @@ class MainActivity : AppCompatActivity() {
         
         if (requestCode == PERMISSION_REQUEST_CODE) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                AppLogStore.i(TAG, "Storage permission granted")
                 checkModelAndProceed()
             } else {
                 // Permission denied, still try to check model (might work on some devices)
+                AppLogStore.w(TAG, "Storage permission denied; continuing model check")
                 checkModelAndProceed()
             }
         }
@@ -126,13 +133,16 @@ class MainActivity : AppCompatActivity() {
         
         // Check if model exists
         if (SdxlModelLoader.isModelAvailable()) {
+            AppLogStore.i(TAG, "Model check passed")
             proceedToMainScreen()
         } else {
+            AppLogStore.w(TAG, "Model check failed: ${SdxlModelLoader.getMissingComponents()}")
             navigateToErrorScreen()
         }
     }
     
     private fun navigateToErrorScreen() {
+        AppLogStore.i(TAG, "Navigating to ModelMissingActivity")
         val intent = Intent(this, ModelMissingActivity::class.java)
         modelMissingLauncher.launch(intent)
     }
@@ -140,6 +150,7 @@ class MainActivity : AppCompatActivity() {
     private fun proceedToMainScreen() {
         statusText.text = "モデルを読み込み中..."
         progressBar.visibility = android.view.View.GONE
+        AppLogStore.i(TAG, "Proceeding to main generation UI")
         
         // TODO: Initialize SDXL runner and show main generation UI
         // For now, show success message
@@ -192,5 +203,12 @@ class MainActivity : AppCompatActivity() {
         }
         
         setContentView(mainLayout)
+        AppLogStore.saveCurrentLogcatSnapshot("startup_flow_completed")
+    }
+
+    override fun onDestroy() {
+        AppLogStore.i(TAG, "MainActivity onDestroy")
+        AppLogStore.saveCurrentLogcatSnapshot("main_activity_destroy")
+        super.onDestroy()
     }
 }

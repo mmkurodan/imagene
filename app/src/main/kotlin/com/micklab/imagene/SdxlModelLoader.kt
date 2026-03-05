@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.Environment
 import androidx.core.content.ContextCompat
 import java.io.File
 
@@ -13,6 +12,8 @@ import java.io.File
  * Handles model path resolution and existence checking.
  */
 object SdxlModelLoader {
+
+    private const val TAG = "SdxlModelLoader"
     
     /** Base path for SDXL models */
     private const val SDXL_BASE_PATH = "/storage/emulated/0/Download/sdxl"
@@ -72,12 +73,14 @@ object SdxlModelLoader {
         
         // Check if base directory exists
         if (!baseDir.exists() || !baseDir.isDirectory) {
+            AppLogStore.w(TAG, "Base model directory is missing: $SDXL_BASE_PATH")
             return false
         }
         
         // Check for model_index.json
         val modelIndex = File(baseDir, MODEL_INDEX_FILE)
         if (!modelIndex.exists() || !modelIndex.isFile) {
+            AppLogStore.w(TAG, "Missing required file: ${modelIndex.absolutePath}")
             return false
         }
         
@@ -85,10 +88,12 @@ object SdxlModelLoader {
         for (dirName in REQUIRED_DIRECTORIES) {
             val dir = File(baseDir, dirName)
             if (!dir.exists() || !dir.isDirectory) {
+                AppLogStore.w(TAG, "Missing required directory: ${dir.absolutePath}")
                 return false
             }
         }
         
+        AppLogStore.i(TAG, "All required SDXL model components are available")
         return true
     }
     
@@ -127,7 +132,7 @@ object SdxlModelLoader {
      * @return true if permission is granted or not needed
      */
     fun hasStoragePermission(context: Context): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             // Android 13+ doesn't need READ_EXTERNAL_STORAGE for media/download files
             true
         } else {
@@ -137,6 +142,8 @@ object SdxlModelLoader {
                 Manifest.permission.READ_EXTERNAL_STORAGE
             ) == PackageManager.PERMISSION_GRANTED
         }
+        AppLogStore.d(TAG, "Storage permission status: granted=$granted, sdk=${Build.VERSION.SDK_INT}")
+        return granted
     }
     
     /**

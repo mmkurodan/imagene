@@ -14,9 +14,14 @@ import android.widget.TextView
  * Shows instructions for placing the model in the correct location.
  */
 class ModelMissingActivity : Activity() {
+
+    companion object {
+        private const val TAG = "ModelMissingActivity"
+    }
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLogStore.i(TAG, "ModelMissingActivity onCreate")
         setupUI()
     }
     
@@ -198,10 +203,12 @@ class ModelMissingActivity : Activity() {
     
     private fun onRetryClicked() {
         if (SdxlModelLoader.isModelAvailable()) {
+            AppLogStore.i(TAG, "Retry succeeded; model is now available")
             // Model is now available, go back to main activity
             setResult(RESULT_OK)
             finish()
         } else {
+            AppLogStore.w(TAG, "Retry failed; missing components: ${SdxlModelLoader.getMissingComponents()}")
             // Still missing, refresh the UI to show current state
             setupUI()
         }
@@ -210,6 +217,7 @@ class ModelMissingActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         // Prevent going back without model
+        AppLogStore.i(TAG, "Back pressed on model-missing screen")
         finish()
     }
 }
