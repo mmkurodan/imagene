@@ -53,12 +53,26 @@ class UNetSessionExample : AutoCloseable {
         val unetModelPath = SdxlModelLoader.getOnnxModelPath("unet")
         Log.i(TAG, "Loading UNet model from: $unetModelPath")
         
+        // If model path is missing or file doesn't exist, log and skip session creation to avoid crashing
+        if (unetModelPath.isNullOrEmpty()) {
+            Log.w(TAG, "UNet model path is not available; skipping UNet session creation")
+            return
+        }
+        val modelFile = java.io.File(unetModelPath)
+        if (!modelFile.exists()) {
+            Log.w(TAG, "UNet model not found at path: $unetModelPath; skipping UNet session creation")
+            return
+        }
+
         // Create session using file path
         // This is the key method: createSession() with file path string
-        unetSession = ortEnv!!.createSession(unetModelPath, sessionOptions)
-        
-        Log.i(TAG, "UNet model loaded successfully")
-        logModelInfo()
+        try {
+            unetSession = ortEnv!!.createSession(unetModelPath, sessionOptions)
+            Log.i(TAG, "UNet model loaded successfully")
+            logModelInfo()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create UNet session: ${e.message}")
+        }
     }
     
     /**
