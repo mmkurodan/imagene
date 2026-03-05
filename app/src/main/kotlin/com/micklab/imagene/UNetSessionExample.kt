@@ -3,9 +3,9 @@ package com.micklab.imagene
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
-import ai.onnxruntime.SessionOptions
-import ai.onnxruntime.SessionOptions.OptLevel
-import ai.onnxruntime.SessionOptions.ExecutionMode
+import ai.onnxruntime.OrtSession.SessionOptions
+import ai.onnxruntime.OrtSession.SessionOptions.OptLevel
+import ai.onnxruntime.OrtSession.SessionOptions.ExecutionMode
 import android.util.Log
 import java.nio.FloatBuffer
 
