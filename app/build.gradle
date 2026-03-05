@@ -1,5 +1,6 @@
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
 }
 
 android {
@@ -30,6 +31,10 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    
     // Disable compression for ONNX files in assets
     androidResources {
         noCompress 'onnx'
@@ -50,11 +55,16 @@ repositories {
 }
 
 dependencies {
+    // Kotlin
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+    
+    // AndroidX Core
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.activity:activity-ktx:1.8.2'
+    
     // ONNX Runtime Mobile
     implementation 'com.microsoft.onnxruntime:onnxruntime-mobile:1.17.0'
-    
-    // Fallback: local AAR if Maven unavailable
-    // implementation(name: 'onnxruntime-mobile', ext: 'aar')
     
     // JSON parsing for manifest
     implementation 'com.google.code.gson:gson:2.10.1'
