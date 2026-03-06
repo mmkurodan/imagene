@@ -56,7 +56,7 @@ class ModelMissingActivity : Activity() {
         
         // Main message
         val message = TextView(this).apply {
-            text = "SDXLモデルが見つかりませんでした。\n以下の場所にモデルを配置してください:"
+            text = "UNetランタイムモデルが見つかりませんでした。\n以下の場所に必要なファイルを配置してください:"
             textSize = 16f
             setTextColor(Color.LTGRAY)
             gravity = Gravity.CENTER
@@ -100,23 +100,17 @@ class ModelMissingActivity : Activity() {
         
         // Required structure
         val structureTitle = TextView(this).apply {
-            text = "\n必要なフォルダ構成:"
+            text = "\n必要なランタイム構成:"
             textSize = 16f
             setTextColor(Color.WHITE)
             setPadding(0, 32, 0, 16)
         }
         mainLayout.addView(structureTitle)
         
-        val requiredFolders = listOf(
-            "📁 unet/",
-            "📁 text_encoder/",
-            "📁 text_encoder_2/",
-            "📁 vae_decoder/",
-            "📁 tokenizer/",
-            "📁 tokenizer_2/",
-            "📁 scheduler/",
-            "📄 model_index.json"
-        )
+        val requiredFolders = buildList {
+            addAll(SdxlModelLoader.getRequiredRuntimeComponents().map { "📁 $it/" })
+            addAll(SdxlModelLoader.getRequiredRuntimeFiles().map { "📄 $it" })
+        }
         
         val structureBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -135,6 +129,14 @@ class ModelMissingActivity : Activity() {
             structureBox.addView(folderText)
         }
         mainLayout.addView(structureBox)
+
+        val optionalNote = TextView(this).apply {
+            text = "現在のビルドでは model_index.json と text_encoder / text_encoder_2 / vae_decoder / tokenizer / tokenizer_2 / scheduler は起動条件ではありません。"
+            textSize = 13f
+            setTextColor(Color.GRAY)
+            setPadding(0, 12, 0, 0)
+        }
+        mainLayout.addView(optionalNote)
         
         // Show missing components if any
         val missingComponents = SdxlModelLoader.getMissingComponents()

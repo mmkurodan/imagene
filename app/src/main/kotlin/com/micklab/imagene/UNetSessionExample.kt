@@ -7,6 +7,7 @@ import ai.onnxruntime.OrtSession.SessionOptions
 import ai.onnxruntime.OrtSession.SessionOptions.OptLevel
 import ai.onnxruntime.OrtSession.SessionOptions.ExecutionMode
 import android.util.Log
+import java.io.File
 import java.nio.FloatBuffer
 
 /**
@@ -17,62 +18,86 @@ class UNetSessionExample : AutoCloseable {
     
     companion object {
         private const val TAG = "UNetSessionExample"
+        private const val NNAPI_THREADS = 4
+        private const val CPU_FALLBACK_THREADS = 2
+        private val ortEnvironment: OrtEnvironment by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+            OrtEnvironment.getEnvironment()
+        }
     }
     
-    private var ortEnv: OrtEnvironment? = null
     private var unetSession: OrtSession? = null
+    private var activeSessionOptions: SessionOptions? = null
+    private val auxiliarySessions = linkedMapOf<String, OrtSession>()
+    private val auxiliarySessionOptions = linkedMapOf<String, SessionOptions>()
     
     /**
      * Initialize ONNX Runtime environment and load UNet model.
      * @throws Exception if model loading fails
      */
     fun initialize() {
-        Log.i(TAG, "Initializing ONNX Runtime environment...")
-        
-        // Get ONNX Runtime environment
-        ortEnv = OrtEnvironment.getEnvironment()
-        
-        // Configure session options
-        val sessionOptions = SessionOptions().apply {
-            // Set optimization level for best performance
-            setOptimizationLevel(OptLevel.ALL_OPT)
-            
-            // Try to enable NNAPI for hardware acceleration (Android)
-            try {
-                addNnapi()
-                Log.i(TAG, "NNAPI execution provider enabled")
-            } catch (e: Exception) {
-                Log.w(TAG, "NNAPI not available, using CPU: ${e.message}")
-            }
-            
-            // Optional: Set number of threads for CPU execution
-            setIntraOpNumThreads(4)
-        }
-        
-        // Get UNet model path from external storage
+        closeSession()
         val unetModelPath = SdxlModelLoader.getOnnxModelPath("unet")
-        Log.i(TAG, "Loading UNet model from: $unetModelPath")
-        
-        // If model path is missing or file doesn't exist, log and skip session creation to avoid crashing
-        if (unetModelPath.isNullOrEmpty()) {
-            Log.w(TAG, "UNet model path is not available; skipping UNet session creation")
-            return
+        val modelFile = File(unetModelPath)
+
+        if (!modelFile.exists() || !modelFile.isFile) {
+            val message = "UNet model not found at path: $unetModelPath"
+            AppLogStore.w(TAG, message)
+            throw IllegalStateException(message)
         }
-        val modelFile = java.io.File(unetModelPath)
-        if (!modelFile.exists()) {
-            Log.w(TAG, "UNet model not found at path: $unetModelPath; skipping UNet session creation")
-            return
+        if (modelFile.length() <= 0L) {
+            val message = "UNet model file is empty: $unetModelPath"
+            AppLogStore.w(TAG, message)
+            throw IllegalStateException(message)
         }
 
-        // Create session using file path
-        // This is the key method: createSession() with file path string
-        try {
-            unetSession = ortEnv!!.createSession(unetModelPath, sessionOptions)
-            Log.i(TAG, "UNet model loaded successfully")
-            logModelInfo()
+        Log.i(TAG, "Initializing ONNX Runtime environment...")
+        AppLogStore.i(TAG, "Loading UNet model from: $unetModelPath (${modelFile.length()} bytes)")
+
+        unetSession = createSessionWithFallback(unetModelPath)
+        Log.i(TAG, "UNet model loaded successfully")
+        logModelInfo()
+    }
+
+    private fun createSessionWithFallback(unetModelPath: String): OrtSession {
+        val failures = mutableListOf<String>()
+
+        createSession(unetModelPath, "NNAPI acceleration", failures) {
+            setOptimizationLevel(OptLevel.ALL_OPT)
+            setIntraOpNumThreads(NNAPI_THREADS)
+            addNnapi()
+        }?.let { return it }
+
+        createSession(unetModelPath, "CPU fallback", failures) {
+            setExecutionMode(ExecutionMode.SEQUENTIAL)
+            setOptimizationLevel(OptLevel.BASIC_OPT)
+            setIntraOpNumThreads(CPU_FALLBACK_THREADS)
+            setMemoryPatternOptimization(true)
+        }?.let { return it }
+
+        throw IllegalStateException(
+            "UNet session initialization failed: ${failures.joinToString(" | ")}"
+        )
+    }
+
+    private fun createSession(
+        unetModelPath: String,
+        label: String,
+        failures: MutableList<String>,
+        configure: SessionOptions.() -> Unit
+    ): OrtSession? {
+        val sessionOptions = SessionOptions()
+        return try {
+            sessionOptions.configure()
+            ortEnvironment.createSession(unetModelPath, sessionOptions).also {
+                activeSessionOptions = sessionOptions
+                AppLogStore.i(TAG, "UNet session created with $label")
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to create UNet session: ${e.message}")
-            AppLogStore.e(TAG, "Failed to create UNet session", e)
+            val detail = "$label failed: ${e.message ?: e::class.java.simpleName}"
+            failures.add(detail)
+            AppLogStore.e(TAG, "Failed to create UNet session with $label", e)
+            sessionOptions.close()
+            null
         }
     }
     
@@ -111,7 +136,6 @@ class UNetSessionExample : AutoCloseable {
         timestep: Long,
         encoderHiddenStates: FloatArray
     ): FloatArray {
-        val env = ortEnv ?: throw IllegalStateException("OrtEnvironment not initialized")
         val session = unetSession ?: throw IllegalStateException("UNet session not initialized")
         
         // Example dimensions (actual SDXL uses different sizes)
@@ -124,51 +148,48 @@ class UNetSessionExample : AutoCloseable {
         
         // Create input tensors
         val sampleTensor = OnnxTensor.createTensor(
-            env,
+            ortEnvironment,
             FloatBuffer.wrap(sample),
             longArrayOf(batchSize.toLong(), channels.toLong(), height.toLong(), width.toLong())
         )
         
         val timestepTensor = OnnxTensor.createTensor(
-            env,
+            ortEnvironment,
             longArrayOf(timestep)
         )
         
         val encoderTensor = OnnxTensor.createTensor(
-            env,
+            ortEnvironment,
             FloatBuffer.wrap(encoderHiddenStates),
             longArrayOf(batchSize.toLong(), seqLen.toLong(), hiddenDim.toLong())
         )
-        
-        // Prepare inputs map
-        val inputs = mapOf(
-            "sample" to sampleTensor,
-            "timestep" to timestepTensor,
-            "encoder_hidden_states" to encoderTensor
-        )
-        
-        // Run inference
-        val results = session.run(inputs)
-        
-        // Get output
-        val outputTensor = results[0] as OnnxTensor
-        val output = outputTensor.floatBuffer.array()
-        
-        // Clean up
-        sampleTensor.close()
-        timestepTensor.close()
-        encoderTensor.close()
-        results.close()
-        
-        return output
+
+        return try {
+            val inputs = mapOf(
+                "sample" to sampleTensor,
+                "timestep" to timestepTensor,
+                "encoder_hidden_states" to encoderTensor
+            )
+            val results = session.run(inputs)
+            try {
+                val outputTensor = results[0] as OnnxTensor
+                val outputBuffer = outputTensor.floatBuffer
+                FloatArray(outputBuffer.remaining()).also { outputBuffer.get(it) }
+            } finally {
+                results.close()
+            }
+        } finally {
+            sampleTensor.close()
+            timestepTensor.close()
+            encoderTensor.close()
+        }
     }
     
     /**
      * Alternative: Load model with custom session options for memory optimization.
      */
     fun initializeWithMemoryOptimization() {
-        ortEnv = OrtEnvironment.getEnvironment()
-        
+        closeSession()
         val sessionOptions = SessionOptions().apply {
             // Enable memory pattern optimization
             setMemoryPatternOptimization(true)
@@ -181,7 +202,13 @@ class UNetSessionExample : AutoCloseable {
         }
         
         val unetModelPath = SdxlModelLoader.getOnnxModelPath("unet")
-        unetSession = ortEnv!!.createSession(unetModelPath, sessionOptions)
+        try {
+            unetSession = ortEnvironment.createSession(unetModelPath, sessionOptions)
+            activeSessionOptions = sessionOptions
+        } catch (e: Exception) {
+            sessionOptions.close()
+            throw e
+        }
     }
     
     /**
@@ -189,11 +216,7 @@ class UNetSessionExample : AutoCloseable {
      * Shows how to load multiple models from external storage.
      */
     fun loadAllComponents(): Map<String, OrtSession> {
-        val env = ortEnv ?: OrtEnvironment.getEnvironment().also { ortEnv = it }
-        val sessionOptions = SessionOptions().apply {
-            setOptimizationLevel(OptLevel.ALL_OPT)
-        }
-        
+        val env = ortEnvironment
         val components = listOf(
             "unet",
             "text_encoder",
@@ -202,27 +225,53 @@ class UNetSessionExample : AutoCloseable {
         )
         
         val sessions = mutableMapOf<String, OrtSession>()
-        
-        for (component in components) {
-            val modelPath = SdxlModelLoader.getOnnxModelPath(component)
-            Log.i(TAG, "Loading $component from: $modelPath")
-            
-            val session = env.createSession(modelPath, sessionOptions)
-            sessions[component] = session
-            
-            Log.i(TAG, "$component loaded successfully")
+
+        closeAuxiliarySessions()
+
+        try {
+            for (component in components) {
+                val modelPath = SdxlModelLoader.getOnnxModelPath(component)
+                Log.i(TAG, "Loading $component from: $modelPath")
+
+                val componentOptions = SessionOptions().apply {
+                    setOptimizationLevel(OptLevel.ALL_OPT)
+                }
+                try {
+                    val session = env.createSession(modelPath, componentOptions)
+                    auxiliarySessions[component] = session
+                    auxiliarySessionOptions[component] = componentOptions
+                    sessions[component] = session
+                    Log.i(TAG, "$component loaded successfully")
+                } catch (e: Exception) {
+                    componentOptions.close()
+                    throw e
+                }
+            }
+        } catch (e: Exception) {
+            closeAuxiliarySessions()
+            throw e
         }
         
         return sessions
     }
-    
-    override fun close() {
+
+    private fun closeAuxiliarySessions() {
+        auxiliarySessions.values.forEach { it.close() }
+        auxiliarySessions.clear()
+        auxiliarySessionOptions.values.forEach { it.close() }
+        auxiliarySessionOptions.clear()
+    }
+
+    private fun closeSession() {
         unetSession?.close()
         unetSession = null
-        
-        ortEnv?.close()
-        ortEnv = null
-        
+        activeSessionOptions?.close()
+        activeSessionOptions = null
+        closeAuxiliarySessions()
+    }
+    
+    override fun close() {
+        closeSession()
         Log.i(TAG, "UNet session closed")
     }
 }

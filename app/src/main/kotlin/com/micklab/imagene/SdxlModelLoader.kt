@@ -18,16 +18,11 @@ object SdxlModelLoader {
     /** Base path for SDXL models */
     private const val SDXL_BASE_PATH = "/storage/emulated/0/Download/sdxl"
     
-    /** Required model directories */
-    private val REQUIRED_DIRECTORIES = listOf(
-        "unet",
-        "text_encoder",
-        "text_encoder_2",
-        "vae_decoder",
-        "tokenizer",
-        "tokenizer_2",
-        "scheduler"
-    )
+    /**
+     * Files that are actually required by the current runtime path.
+     * The app only opens the UNet model directly; tokenizer/scheduler assets are not consumed.
+     */
+    private val REQUIRED_RUNTIME_FILES = listOf("unet/model.onnx")
     
     /** Required model files */
     private const val MODEL_INDEX_FILE = "model_index.json"
@@ -55,6 +50,18 @@ object SdxlModelLoader {
     fun getOnnxModelPath(component: String): String {
         return "$SDXL_BASE_PATH/$component/model.onnx"
     }
+
+    /**
+     * Get the runtime files required by the current app build.
+     */
+    fun getRequiredRuntimeFiles(): List<String> = REQUIRED_RUNTIME_FILES.toList()
+
+    /**
+     * Get the runtime components required by the current app build.
+     */
+    fun getRequiredRuntimeComponents(): List<String> {
+        return REQUIRED_RUNTIME_FILES.map { it.substringBefore('/') }.distinct()
+    }
     
     /**
      * Get the path to model_index.json
@@ -76,29 +83,16 @@ object SdxlModelLoader {
             AppLogStore.w(TAG, "Base model directory is missing: $SDXL_BASE_PATH")
             return false
         }
-        
-        // Check for model_index.json
-        val modelIndex = File(baseDir, MODEL_INDEX_FILE)
-        if (!modelIndex.exists() || !modelIndex.isFile) {
-            AppLogStore.w(TAG, "Missing required file: ${modelIndex.absolutePath}")
-            return false
-        }
-        
-        // Check all required directories and model.onnx files exist
-        for (dirName in REQUIRED_DIRECTORIES) {
-            val dir = File(baseDir, dirName)
-            if (!dir.exists() || !dir.isDirectory) {
-                AppLogStore.w(TAG, "Missing required directory: ${dir.absolutePath}")
-                return false
-            }
-            val modelFile = File(dir, "model.onnx")
-            if (!modelFile.exists() || !modelFile.isFile) {
-                AppLogStore.w(TAG, "Missing model file: ${modelFile.absolutePath}")
+
+        for (relativePath in REQUIRED_RUNTIME_FILES) {
+            val requiredFile = File(baseDir, relativePath)
+            if (!requiredFile.exists() || !requiredFile.isFile) {
+                AppLogStore.w(TAG, "Missing required runtime file: ${requiredFile.absolutePath}")
                 return false
             }
         }
         
-        AppLogStore.i(TAG, "All required SDXL model components are available")
+        AppLogStore.i(TAG, "All required SDXL runtime assets are available")
         return true
     }
     
@@ -110,25 +104,15 @@ object SdxlModelLoader {
         val missing = mutableListOf<String>()
         val baseDir = File(SDXL_BASE_PATH)
         
-        if (!baseDir.exists()) {
+        if (!baseDir.exists() || !baseDir.isDirectory) {
             missing.add("Base directory: $SDXL_BASE_PATH")
             return missing
         }
-        
-        val modelIndex = File(baseDir, MODEL_INDEX_FILE)
-        if (!modelIndex.exists()) {
-            missing.add(MODEL_INDEX_FILE)
-        }
-        
-        for (dirName in REQUIRED_DIRECTORIES) {
-            val dir = File(baseDir, dirName)
-            if (!dir.exists() || !dir.isDirectory) {
-                missing.add("$dirName/")
-            } else {
-                val modelFile = File(dir, "model.onnx")
-                if (!modelFile.exists() || !modelFile.isFile) {
-                    missing.add("$dirName/model.onnx")
-                }
+
+        for (relativePath in REQUIRED_RUNTIME_FILES) {
+            val requiredFile = File(baseDir, relativePath)
+            if (!requiredFile.exists() || !requiredFile.isFile) {
+                missing.add(relativePath)
             }
         }
         

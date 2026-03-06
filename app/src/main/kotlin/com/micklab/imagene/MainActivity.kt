@@ -182,14 +182,14 @@ class MainActivity : AppCompatActivity() {
         
         // Show available components
         val componentsTitle = TextView(this).apply {
-            text = "\n利用可能なコンポーネント:"
+            text = "\n利用中のランタイムコンポーネント:"
             textSize = 16f
             setTextColor(Color.WHITE)
             setPadding(0, 32, 0, 16)
         }
         mainLayout.addView(componentsTitle)
         
-        val components = listOf("unet", "text_encoder", "text_encoder_2", "vae_decoder", "tokenizer", "tokenizer_2", "scheduler")
+        val components = SdxlModelLoader.getRequiredRuntimeComponents()
         for (component in components) {
             val componentText = TextView(this).apply {
                 text = "✓ $component"
