@@ -142,7 +142,7 @@ class SdxlGenerationRunner {
 
     private fun buildEncoderStates(request: GenerationRequest, promptSeed: Long): FloatArray {
         val text = "${request.prompt}\u0000${request.negativePrompt}"
-        val random = Random(promptSeed xor 0x5f3759dfl)
+        val random = Random(promptSeed xor 0x5f3759dfL)
         val output = FloatArray(ENCODER_SEQ_LEN * ENCODER_HIDDEN_SIZE)
 
         var rolling = text.hashCode().toLong() xor promptSeed
