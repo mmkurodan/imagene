@@ -12,6 +12,11 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
+import android.Manifest
+import android.content.pm.PackageManager
+import android.app.Activity
+import android.os.Environment
+import android.provider.DocumentsContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import java.util.concurrent.Executors
@@ -42,6 +47,38 @@ class ModelMissingActivity : AppCompatActivity() {
             return@registerForActivityResult
         }
         startImport(uri)
+    }
+
+    private val requestReadStoragePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            openZipPickerWithInitialUri()
+        } else {
+            // Permission denied — fall back to the older OpenDocument launcher
+            importZipLauncher.launch(
+                arrayOf(
+                    "application/zip",
+                    "application/x-zip-compressed",
+                    "application/octet-stream"
+                )
+            )
+        }
+    }
+
+    private val openDocumentWithInitialUriLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = result.data?.data
+            if (uri == null) {
+                setImportStatus("ZIP の選択をキャンセルしました。", isError = false)
+                return@registerForActivityResult
+            }
+            startImport(uri)
+        } else {
+            setImportStatus("ZIP の選択をキャンセルしました。", isError = false)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -273,15 +310,42 @@ class ModelMissingActivity : AppCompatActivity() {
         setContentView(scrollView)
     }
 
+    private fun openZipPickerWithInitialUri() {
+        try {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
+                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                    "application/zip",
+                    "application/x-zip-compressed",
+                    "application/octet-stream"
+                ))
+                type = "*/*"
+                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            }
+
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val initialUri = Uri.fromFile(downloadsDir)
+            intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri)
+
+            if (intent.resolveActivity(packageManager) != null) {
+                openDocumentWithInitialUriLauncher.launch(intent)
+            } else {
+                importZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
+            }
+        } catch (e: Exception) {
+            AppLogStore.w(TAG, "Failed to open picker with initial URI: ${e.message}")
+            importZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
+        }
+    }
+
     private fun onImportClicked() {
         AppLogStore.i(TAG, "Opening model ZIP picker")
-        importZipLauncher.launch(
-            arrayOf(
-                "application/zip",
-                "application/x-zip-compressed",
-                "application/octet-stream"
-            )
-        )
+        if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+            openZipPickerWithInitialUri()
+        } else {
+            requestReadStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
     }
 
     private fun startImport(uri: Uri) {
