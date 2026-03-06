@@ -317,7 +317,6 @@ class GenerationActivity : AppCompatActivity() {
                         errorText.text = ""
                     }
                     setGeneratingState(false)
-                    AppLogStore.saveCurrentLogcatSnapshot("generation_completed")
                 }
             } catch (e: CancellationException) {
                 runOnUiThread {

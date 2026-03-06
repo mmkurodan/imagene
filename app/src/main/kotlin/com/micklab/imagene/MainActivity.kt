@@ -151,7 +151,6 @@ class MainActivity : AppCompatActivity() {
         statusText.text = "生成画面へ移動中..."
         progressBar.visibility = android.view.View.GONE
         AppLogStore.i(TAG, "Proceeding to main generation UI")
-        AppLogStore.saveCurrentLogcatSnapshot("startup_flow_completed")
         startActivity(Intent(this, GenerationActivity::class.java))
         finish()
     }
@@ -202,12 +201,10 @@ class MainActivity : AppCompatActivity() {
         }
         
         setContentView(mainLayout)
-        AppLogStore.saveCurrentLogcatSnapshot("startup_flow_completed")
     }
 
     override fun onDestroy() {
         AppLogStore.i(TAG, "MainActivity onDestroy")
-        AppLogStore.saveCurrentLogcatSnapshot("main_activity_destroy")
         super.onDestroy()
     }
 }

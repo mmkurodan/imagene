@@ -43,7 +43,6 @@ object AppLogStore {
             initialized = true
 
             write(Log.INFO, SOURCE_TAG, "Log directory: ${targetDir.absolutePath}")
-            saveCurrentLogcatSnapshot("previous_run_buffer")
             installUncaughtExceptionHandler()
             write(Log.INFO, SOURCE_TAG, "App log capture initialized")
         }
@@ -57,32 +56,12 @@ object AppLogStore {
 
     fun e(tag: String, message: String, throwable: Throwable? = null) = write(Log.ERROR, tag, message, throwable)
 
-    fun saveCurrentLogcatSnapshot(reason: String) {
-        val dir = logDirectory ?: return
-        val logcatFile = File(dir, "logcat_${sanitize(reason)}_${fileTimestamp()}.txt")
-        try {
-            val process = ProcessBuilder("logcat", "-d", "-v", "threadtime")
-                .redirectErrorStream(true)
-                .start()
 
-            logcatFile.outputStream().use { output ->
-                process.inputStream.use { input -> input.copyTo(output) }
-            }
-            val exitCode = process.waitFor()
-            write(Log.INFO, SOURCE_TAG, "Saved logcat snapshot: ${logcatFile.name} (exit=$exitCode)")
-        } catch (e: IOException) {
-            write(Log.ERROR, SOURCE_TAG, "Failed to save logcat snapshot", e)
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            write(Log.ERROR, SOURCE_TAG, "Logcat snapshot interrupted", e)
-        }
-    }
 
     private fun installUncaughtExceptionHandler() {
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             write(Log.ERROR, "UncaughtException", "Fatal crash on thread=${thread.name}", throwable)
-            saveCurrentLogcatSnapshot("fatal_${thread.name}")
             if (previousHandler != null) {
                 previousHandler.uncaughtException(thread, throwable)
             } else {
