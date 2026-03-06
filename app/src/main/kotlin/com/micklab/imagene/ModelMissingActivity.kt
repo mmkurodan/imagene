@@ -15,7 +15,6 @@ import android.widget.TextView
 import android.Manifest
 import android.content.pm.PackageManager
 import android.app.Activity
-import android.os.Environment
 import android.provider.DocumentsContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -51,19 +50,9 @@ class ModelMissingActivity : AppCompatActivity() {
 
     private val requestReadStoragePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            openZipPickerWithInitialUri()
-        } else {
-            // Permission denied — fall back to the older OpenDocument launcher
-            importZipLauncher.launch(
-                arrayOf(
-                    "application/zip",
-                    "application/x-zip-compressed",
-                    "application/octet-stream"
-                )
-            )
-        }
+    ) { _ ->
+        // Whether granted or not, open the picker — ACTION_OPEN_DOCUMENT handles access itself.
+        openZipPickerWithInitialUri()
     }
 
     private val openDocumentWithInitialUriLauncher = registerForActivityResult(
@@ -324,9 +313,9 @@ class ModelMissingActivity : AppCompatActivity() {
                 flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
             }
 
-            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val initialUri = Uri.fromFile(downloadsDir)
-            intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri)
+            // Use the Downloads document provider URI so the picker opens directly in Downloads.
+            val downloadsUri = Uri.parse("content://com.android.providers.downloads.documents/root/downloads")
+            intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, downloadsUri)
 
             if (intent.resolveActivity(packageManager) != null) {
                 openDocumentWithInitialUriLauncher.launch(intent)
@@ -341,10 +330,15 @@ class ModelMissingActivity : AppCompatActivity() {
 
     private fun onImportClicked() {
         AppLogStore.i(TAG, "Opening model ZIP picker")
-        if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
-            openZipPickerWithInitialUri()
-        } else {
+        // ACTION_OPEN_DOCUMENT grants access through the picker itself and does not require
+        // READ_EXTERNAL_STORAGE. On Android 10–12 (API 29–32), request the permission as a hint
+        // so the system can surface the Downloads folder more reliably.
+        if (android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.S_V2 &&
+            checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) {
             requestReadStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+        } else {
+            openZipPickerWithInitialUri()
         }
     }
 
