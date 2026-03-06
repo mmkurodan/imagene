@@ -84,11 +84,16 @@ object SdxlModelLoader {
             return false
         }
         
-        // Check all required directories exist
+        // Check all required directories and model.onnx files exist
         for (dirName in REQUIRED_DIRECTORIES) {
             val dir = File(baseDir, dirName)
             if (!dir.exists() || !dir.isDirectory) {
                 AppLogStore.w(TAG, "Missing required directory: ${dir.absolutePath}")
+                return false
+            }
+            val modelFile = File(dir, "model.onnx")
+            if (!modelFile.exists() || !modelFile.isFile) {
+                AppLogStore.w(TAG, "Missing model file: ${modelFile.absolutePath}")
                 return false
             }
         }
@@ -119,6 +124,11 @@ object SdxlModelLoader {
             val dir = File(baseDir, dirName)
             if (!dir.exists() || !dir.isDirectory) {
                 missing.add("$dirName/")
+            } else {
+                val modelFile = File(dir, "model.onnx")
+                if (!modelFile.exists() || !modelFile.isFile) {
+                    missing.add("$dirName/model.onnx")
+                }
             }
         }
         

@@ -116,15 +116,15 @@ class SdxlGenerationRunner {
             null
         } catch (e: OrtException) {
             val warning = "UNet推論を実行できなかったため軽量生成で続行しました。(${e.message})"
-            AppLogStore.w(TAG, warning)
+            AppLogStore.e(TAG, warning, e)
             warning
         } catch (e: IllegalStateException) {
             val warning = "UNet初期化に失敗したため軽量生成で続行しました。(${e.message})"
-            AppLogStore.w(TAG, warning)
+            AppLogStore.e(TAG, warning, e)
             warning
         } catch (e: IllegalArgumentException) {
             val warning = "UNet入力の解釈に失敗したため軽量生成で続行しました。(${e.message})"
-            AppLogStore.w(TAG, warning)
+            AppLogStore.e(TAG, warning, e)
             warning
         } finally {
             unet.close()

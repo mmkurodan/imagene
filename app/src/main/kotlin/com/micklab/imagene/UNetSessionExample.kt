@@ -72,6 +72,7 @@ class UNetSessionExample : AutoCloseable {
             logModelInfo()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create UNet session: ${e.message}")
+            AppLogStore.e(TAG, "Failed to create UNet session", e)
         }
     }
     
