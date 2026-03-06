@@ -1,10 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Storage permission for Android 12 and below -->
-    <uses-permission 
-        android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
-
     <application
         android:label="imagene"
         android:theme="@style/Theme.AppCompat.Light.NoActionBar">
@@ -23,7 +18,7 @@
         <activity
             android:name=".ModelMissingActivity"
             android:exported="false"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
         <activity
             android:name=".GenerationActivity"

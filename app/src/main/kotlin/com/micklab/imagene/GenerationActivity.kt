@@ -57,6 +57,8 @@ class GenerationActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLogStore.initialize(this)
+        SdxlModelLoader.initialize(this)
         AppLogStore.i(TAG, "GenerationActivity onCreate")
         setupUi()
     }

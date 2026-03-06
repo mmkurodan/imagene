@@ -1,86 +1,66 @@
 package com.micklab.imagene
 
-import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.core.content.ContextCompat
 import java.io.File
 
 /**
- * SDXL Model Loader for external storage.
- * Handles model path resolution and existence checking.
+ * Resolves SDXL model paths inside app-managed storage.
  */
 object SdxlModelLoader {
 
     private const val TAG = "SdxlModelLoader"
-    
-    /** Base path for SDXL models */
-    private const val SDXL_BASE_PATH = "/storage/emulated/0/Download/sdxl"
-    
+    private const val MODEL_DIRECTORY_NAME = "sdxl"
+    private const val MODEL_INDEX_FILE = "model_index.json"
+
     /**
      * Files that are actually required by the current runtime path.
      * The app only opens the UNet model directly; tokenizer/scheduler assets are not consumed.
      */
     private val REQUIRED_RUNTIME_FILES = listOf("unet/model.onnx")
-    
-    /** Required model files */
-    private const val MODEL_INDEX_FILE = "model_index.json"
-    
-    /**
-     * Get the base path for SDXL models.
-     * @return Absolute path to the SDXL model directory
-     */
-    fun getModelBasePath(): String = SDXL_BASE_PATH
-    
-    /**
-     * Get the path to a specific model component.
-     * @param component Component name (e.g., "unet", "text_encoder")
-     * @return Absolute path to the component directory
-     */
-    fun getComponentPath(component: String): String {
-        return "$SDXL_BASE_PATH/$component"
-    }
-    
-    /**
-     * Get the path to the ONNX model file within a component.
-     * @param component Component name (e.g., "unet", "vae_decoder")
-     * @return Absolute path to the model.onnx file
-     */
-    fun getOnnxModelPath(component: String): String {
-        return "$SDXL_BASE_PATH/$component/model.onnx"
+
+    @Volatile
+    private var appContext: Context? = null
+
+    @Volatile
+    private var loggedBasePath: String? = null
+
+    fun initialize(context: Context) {
+        val applicationContext = context.applicationContext
+        appContext = applicationContext
+
+        val basePath = resolveModelBaseDir(applicationContext).absolutePath
+        if (loggedBasePath != basePath) {
+            loggedBasePath = basePath
+            AppLogStore.i(TAG, "Using SDXL model directory: $basePath")
+        }
     }
 
-    /**
-     * Get the runtime files required by the current app build.
-     */
+    fun getModelBaseDir(): File = resolveModelBaseDir(requireContext())
+
+    fun getModelBasePath(): String = getModelBaseDir().absolutePath
+
+    fun getComponentPath(component: String): String {
+        return File(getModelBaseDir(), component).absolutePath
+    }
+
+    fun getOnnxModelPath(component: String): String {
+        return File(getComponentPath(component), "model.onnx").absolutePath
+    }
+
     fun getRequiredRuntimeFiles(): List<String> = REQUIRED_RUNTIME_FILES.toList()
 
-    /**
-     * Get the runtime components required by the current app build.
-     */
     fun getRequiredRuntimeComponents(): List<String> {
         return REQUIRED_RUNTIME_FILES.map { it.substringBefore('/') }.distinct()
     }
-    
-    /**
-     * Get the path to model_index.json
-     * @return Absolute path to model_index.json
-     */
+
     fun getModelIndexPath(): String {
-        return "$SDXL_BASE_PATH/$MODEL_INDEX_FILE"
+        return File(getModelBaseDir(), MODEL_INDEX_FILE).absolutePath
     }
-    
-    /**
-     * Check if all required model files and directories exist.
-     * @return true if all models are present, false otherwise
-     */
+
     fun isModelAvailable(): Boolean {
-        val baseDir = File(SDXL_BASE_PATH)
-        
-        // Check if base directory exists
+        val baseDir = getModelBaseDir()
         if (!baseDir.exists() || !baseDir.isDirectory) {
-            AppLogStore.w(TAG, "Base model directory is missing: $SDXL_BASE_PATH")
+            AppLogStore.w(TAG, "Base model directory is missing: ${baseDir.absolutePath}")
             return false
         }
 
@@ -91,21 +71,17 @@ object SdxlModelLoader {
                 return false
             }
         }
-        
+
         AppLogStore.i(TAG, "All required SDXL runtime assets are available")
         return true
     }
-    
-    /**
-     * Get detailed information about what's missing.
-     * @return List of missing components, empty if all present
-     */
+
     fun getMissingComponents(): List<String> {
         val missing = mutableListOf<String>()
-        val baseDir = File(SDXL_BASE_PATH)
-        
+        val baseDir = getModelBaseDir()
+
         if (!baseDir.exists() || !baseDir.isDirectory) {
-            missing.add("Base directory: $SDXL_BASE_PATH")
+            missing.add("Base directory: ${baseDir.absolutePath}")
             return missing
         }
 
@@ -115,36 +91,16 @@ object SdxlModelLoader {
                 missing.add(relativePath)
             }
         }
-        
+
         return missing
     }
-    
-    /**
-     * Check if storage permission is needed and granted.
-     * Android 13+ doesn't need READ_EXTERNAL_STORAGE for Download folder.
-     * @param context Application context
-     * @return true if permission is granted or not needed
-     */
-    fun hasStoragePermission(context: Context): Boolean {
-        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+ doesn't need READ_EXTERNAL_STORAGE for media/download files
-            true
-        } else {
-            // Android 12 and below need READ_EXTERNAL_STORAGE
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED
-        }
-        AppLogStore.d(TAG, "Storage permission status: granted=$granted, sdk=${Build.VERSION.SDK_INT}")
-        return granted
+
+    private fun requireContext(): Context {
+        return appContext ?: throw IllegalStateException("SdxlModelLoader is not initialized")
     }
-    
-    /**
-     * Check if storage permission is needed for this Android version.
-     * @return true if permission request is needed
-     */
-    fun needsStoragePermission(): Boolean {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+
+    private fun resolveModelBaseDir(context: Context): File {
+        val storageRoot = context.getExternalFilesDir(null) ?: context.filesDir
+        return File(storageRoot, MODEL_DIRECTORY_NAME)
     }
 }

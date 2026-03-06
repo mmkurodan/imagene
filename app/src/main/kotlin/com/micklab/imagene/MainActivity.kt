@@ -1,11 +1,8 @@
 package com.micklab.imagene
 
-import android.Manifest
 import android.app.Activity
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
-import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.LinearLayout
@@ -13,7 +10,6 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
 
 /**
  * Main Activity for SDXL Image Generator.
@@ -23,7 +19,6 @@ class MainActivity : AppCompatActivity() {
     
     companion object {
         private const val TAG = "MainActivity"
-        private const val PERMISSION_REQUEST_CODE = 1002
     }
     
     private lateinit var statusText: TextView
@@ -44,9 +39,10 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppLogStore.initialize(this)
+        SdxlModelLoader.initialize(this)
         AppLogStore.i(TAG, "MainActivity onCreate")
         setupLoadingUI()
-        checkPermissionsAndModel()
+        checkModelAndProceed()
     }
     
     private fun setupLoadingUI() {
@@ -85,53 +81,10 @@ class MainActivity : AppCompatActivity() {
         setContentView(mainLayout)
     }
     
-    private fun checkPermissionsAndModel() {
-        AppLogStore.i(TAG, "Checking storage permission and model availability")
-        // Check if we need storage permission (Android 12 and below)
-        if (SdxlModelLoader.needsStoragePermission() && !SdxlModelLoader.hasStoragePermission(this)) {
-            AppLogStore.w(TAG, "Storage permission is missing; requesting permission")
-            requestStoragePermission()
-        } else {
-            checkModelAndProceed()
-        }
-    }
-    
-    private fun requestStoragePermission() {
-        statusText.text = "ストレージ権限を確認中..."
-        AppLogStore.i(TAG, "Requesting READ_EXTERNAL_STORAGE permission")
-        
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE),
-                PERMISSION_REQUEST_CODE
-            )
-        }
-    }
-    
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        
-        if (requestCode == PERMISSION_REQUEST_CODE) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                AppLogStore.i(TAG, "Storage permission granted")
-                checkModelAndProceed()
-            } else {
-                // Permission denied, still try to check model (might work on some devices)
-                AppLogStore.w(TAG, "Storage permission denied; continuing model check")
-                checkModelAndProceed()
-            }
-        }
-    }
-    
     private fun checkModelAndProceed() {
         statusText.text = "モデルを確認中..."
+        AppLogStore.i(TAG, "Checking model availability")
         
-        // Check if model exists
         if (SdxlModelLoader.isModelAvailable()) {
             AppLogStore.i(TAG, "Model check passed")
             proceedToMainScreen()

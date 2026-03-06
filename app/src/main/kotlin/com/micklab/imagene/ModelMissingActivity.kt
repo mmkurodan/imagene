@@ -1,30 +1,57 @@
 package com.micklab.imagene
 
-import android.app.Activity
+import android.content.Intent
+import android.graphics.Typeface
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import java.util.concurrent.Executors
 
 /**
  * Error screen displayed when SDXL model is not found.
- * Shows instructions for placing the model in the correct location.
+ * Guides the user through importing a model ZIP into app-managed storage.
  */
-class ModelMissingActivity : Activity() {
+class ModelMissingActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "ModelMissingActivity"
     }
-    
+
+    private val importExecutor = Executors.newSingleThreadExecutor()
+
+    private lateinit var importStatusText: TextView
+    private lateinit var importProgressBar: ProgressBar
+    private lateinit var importButton: Button
+    private lateinit var retryButton: Button
+    private lateinit var exitButton: Button
+
+    private val importZipLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) {
+            setImportStatus("ZIP の選択をキャンセルしました。", isError = false)
+            return@registerForActivityResult
+        }
+        startImport(uri)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLogStore.initialize(this)
+        SdxlModelLoader.initialize(this)
         AppLogStore.i(TAG, "ModelMissingActivity onCreate")
         setupUI()
     }
-    
+
     private fun setupUI() {
         val scrollView = ScrollView(this).apply {
             setBackgroundColor(Color.parseColor("#1a1a2e"))
@@ -56,7 +83,7 @@ class ModelMissingActivity : Activity() {
         
         // Main message
         val message = TextView(this).apply {
-            text = "UNetランタイムモデルが見つかりませんでした。\n以下の場所に必要なファイルを配置してください:"
+            text = "UNetランタイムモデルが見つかりませんでした。\nモデルZIPを選択すると、アプリ専用ストレージへ展開します。"
             textSize = 16f
             setTextColor(Color.LTGRAY)
             gravity = Gravity.CENTER
@@ -72,17 +99,17 @@ class ModelMissingActivity : Activity() {
         }
         
         val pathLabel = TextView(this).apply {
-            text = "配置場所:"
+            text = "展開先:"
             textSize = 14f
             setTextColor(Color.GRAY)
         }
         pathBox.addView(pathLabel)
         
         val pathText = TextView(this).apply {
-            text = "Downloads/sdxl/"
+            text = "App external files / sdxl"
             textSize = 18f
             setTextColor(Color.parseColor("#4fc3f7"))
-            typeface = android.graphics.Typeface.MONOSPACE
+            typeface = Typeface.MONOSPACE
             setPadding(0, 8, 0, 0)
         }
         pathBox.addView(pathText)
@@ -91,7 +118,7 @@ class ModelMissingActivity : Activity() {
             text = SdxlModelLoader.getModelBasePath()
             textSize = 12f
             setTextColor(Color.GRAY)
-            typeface = android.graphics.Typeface.MONOSPACE
+            typeface = Typeface.MONOSPACE
             setPadding(0, 4, 0, 0)
         }
         pathBox.addView(fullPathText)
@@ -123,12 +150,20 @@ class ModelMissingActivity : Activity() {
                 text = folder
                 textSize = 14f
                 setTextColor(Color.LTGRAY)
-                typeface = android.graphics.Typeface.MONOSPACE
+                typeface = Typeface.MONOSPACE
                 setPadding(0, 4, 0, 4)
             }
             structureBox.addView(folderText)
         }
         mainLayout.addView(structureBox)
+
+        val importNote = TextView(this).apply {
+            text = "公開 Downloads 直下のモデルは ONNX Runtime から開けない場合があるため、この画面からZIPを取り込んでください。"
+            textSize = 13f
+            setTextColor(Color.GRAY)
+            setPadding(0, 12, 0, 0)
+        }
+        mainLayout.addView(importNote)
 
         val optionalNote = TextView(this).apply {
             text = "現在のビルドでは model_index.json と text_encoder / text_encoder_2 / vae_decoder / tokenizer / tokenizer_2 / scheduler は起動条件ではありません。"
@@ -137,7 +172,7 @@ class ModelMissingActivity : Activity() {
             setPadding(0, 12, 0, 0)
         }
         mainLayout.addView(optionalNote)
-        
+
         // Show missing components if any
         val missingComponents = SdxlModelLoader.getMissingComponents()
         if (missingComponents.isNotEmpty()) {
@@ -166,9 +201,45 @@ class ModelMissingActivity : Activity() {
             }
             mainLayout.addView(missingBox)
         }
-        
-        // Retry button
-        val retryButton = Button(this).apply {
+
+        importProgressBar = ProgressBar(this).apply {
+            visibility = View.GONE
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            params.gravity = Gravity.CENTER_HORIZONTAL
+            params.setMargins(0, 32, 0, 16)
+            layoutParams = params
+        }
+        mainLayout.addView(importProgressBar)
+
+        importStatusText = TextView(this).apply {
+            visibility = View.GONE
+            textSize = 14f
+            setTextColor(Color.parseColor("#81c784"))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 16)
+        }
+        mainLayout.addView(importStatusText)
+
+        importButton = Button(this).apply {
+            text = "モデルZIPを選択"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#4fc3f7"))
+            setPadding(48, 24, 48, 24)
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            params.setMargins(0, 48, 0, 16)
+            layoutParams = params
+            setOnClickListener { onImportClicked() }
+        }
+        mainLayout.addView(importButton)
+
+        retryButton = Button(this).apply {
             text = "再試行"
             textSize = 16f
             setTextColor(Color.WHITE)
@@ -178,14 +249,13 @@ class ModelMissingActivity : Activity() {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
-            params.setMargins(0, 48, 0, 16)
+            params.setMargins(0, 0, 0, 16)
             layoutParams = params
             setOnClickListener { onRetryClicked() }
         }
         mainLayout.addView(retryButton)
-        
-        // Exit button
-        val exitButton = Button(this).apply {
+
+        exitButton = Button(this).apply {
             text = "終了"
             textSize = 14f
             setTextColor(Color.LTGRAY)
@@ -202,24 +272,91 @@ class ModelMissingActivity : Activity() {
         scrollView.addView(mainLayout)
         setContentView(scrollView)
     }
-    
+
+    private fun onImportClicked() {
+        AppLogStore.i(TAG, "Opening model ZIP picker")
+        importZipLauncher.launch(
+            arrayOf(
+                "application/zip",
+                "application/x-zip-compressed",
+                "application/octet-stream"
+            )
+        )
+    }
+
+    private fun startImport(uri: Uri) {
+        AppLogStore.i(TAG, "Selected model ZIP: $uri")
+        try {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: SecurityException) {
+            // Some providers do not grant persistable access; immediate extraction still works.
+        }
+
+        setBusy(isBusy = true)
+        setImportStatus("モデルZIPを展開中...", isError = false)
+
+        importExecutor.execute {
+            try {
+                val result = SdxlModelArchiveImporter.importFromZip(this, uri)
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    setBusy(isBusy = false)
+                    val message = "モデルを展開しました (${result.extractedFiles} files)。生成画面へ戻ります。"
+                    setImportStatus(message, isError = false)
+                    AppLogStore.i(TAG, message)
+                    setResult(RESULT_OK)
+                    finish()
+                }
+            } catch (e: Exception) {
+                val message = "ZIP の展開に失敗しました: ${e.message}"
+                AppLogStore.e(TAG, message, e)
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    setBusy(isBusy = false)
+                    setImportStatus(message, isError = true)
+                }
+            }
+        }
+    }
+
     private fun onRetryClicked() {
         if (SdxlModelLoader.isModelAvailable()) {
             AppLogStore.i(TAG, "Retry succeeded; model is now available")
-            // Model is now available, go back to main activity
             setResult(RESULT_OK)
             finish()
         } else {
+            val message = "必要なファイルがまだ見つかりません。ZIP を取り込むか、展開先を確認してください。"
             AppLogStore.w(TAG, "Retry failed; missing components: ${SdxlModelLoader.getMissingComponents()}")
-            // Still missing, refresh the UI to show current state
-            setupUI()
+            setImportStatus(message, isError = true)
         }
     }
-    
+
+    private fun setBusy(isBusy: Boolean) {
+        importButton.isEnabled = !isBusy
+        retryButton.isEnabled = !isBusy
+        exitButton.isEnabled = !isBusy
+        importProgressBar.visibility = if (isBusy) View.VISIBLE else View.GONE
+    }
+
+    private fun setImportStatus(message: String, isError: Boolean) {
+        importStatusText.visibility = if (message.isBlank()) View.GONE else View.VISIBLE
+        importStatusText.text = message
+        importStatusText.setTextColor(
+            if (isError) Color.parseColor("#ff8a80") else Color.parseColor("#81c784")
+        )
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        // Prevent going back without model
         AppLogStore.i(TAG, "Back pressed on model-missing screen")
         finish()
+    }
+
+    override fun onDestroy() {
+        importExecutor.shutdownNow()
+        super.onDestroy()
     }
 }
