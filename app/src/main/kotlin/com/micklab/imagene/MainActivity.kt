@@ -148,13 +148,12 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun proceedToMainScreen() {
-        statusText.text = "モデルを読み込み中..."
+        statusText.text = "生成画面へ移動中..."
         progressBar.visibility = android.view.View.GONE
         AppLogStore.i(TAG, "Proceeding to main generation UI")
-        
-        // TODO: Initialize SDXL runner and show main generation UI
-        // For now, show success message
-        showMainGenerationUI()
+        AppLogStore.saveCurrentLogcatSnapshot("startup_flow_completed")
+        startActivity(Intent(this, GenerationActivity::class.java))
+        finish()
     }
     
     private fun showMainGenerationUI() {
