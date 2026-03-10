@@ -23,18 +23,10 @@ data class GenerationResult(
     val warning: String? = null
 )
 
-/**
- * Lightweight generation runner:
- * - Validates SD15 model location
- * - Attempts a UNet refinement pass via ONNX Runtime when possible
- * - Produces a deterministic image from latent space for UI preview
- */
 class SdxlGenerationRunner {
 
     companion object {
         private const val TAG = "SdxlGenerationRunner"
-        private const val LATENT_WIDTH = 128
-        private const val LATENT_HEIGHT = 128
         private const val LATENT_CHANNELS = 4
         private const val ENCODER_SEQ_LEN = 77
         private const val ENCODER_HIDDEN_SIZE = 768
@@ -59,12 +51,16 @@ class SdxlGenerationRunner {
         val total = steps + 2
         val promptSeed = computePromptSeed(request)
 
+        // ★ SD15 latent サイズを width/8, height/8 から計算
+        val latentWidth = width / 8
+        val latentHeight = height / 8
+
         onProgress(0, total, "モデルを初期化中...")
         if (isCancelled()) {
             throw CancellationException("Generation cancelled before start")
         }
 
-        val latent = createInitialLatent(promptSeed)
+        val latent = createInitialLatent(promptSeed, latentWidth, latentHeight)
         val refinementWarning = runUnetRefinement(latent, request, promptSeed)
 
         for (step in 1..steps) {
@@ -79,7 +75,15 @@ class SdxlGenerationRunner {
             throw CancellationException("Generation cancelled before rendering")
         }
         onProgress(steps + 1, total, "画像をレンダリング中...")
-        val bitmap = renderBitmapFromLatent(latent, width, height, guidanceScale, promptSeed)
+        val bitmap = renderBitmapFromLatent(
+            latent = latent,
+            width = width,
+            height = height,
+            latentWidth = latentWidth,
+            latentHeight = latentHeight,
+            guidanceScale = guidanceScale,
+            promptSeed = promptSeed
+        )
         onProgress(total, total, "生成完了")
 
         AppLogStore.i(
@@ -131,9 +135,14 @@ class SdxlGenerationRunner {
         }
     }
 
-    private fun createInitialLatent(promptSeed: Long): FloatArray {
+    // ★ latentWidth / latentHeight を引数で受け取るように変更
+    private fun createInitialLatent(
+        promptSeed: Long,
+        latentWidth: Int,
+        latentHeight: Int
+    ): FloatArray {
         val random = Random(promptSeed)
-        val latent = FloatArray(LATENT_WIDTH * LATENT_HEIGHT * LATENT_CHANNELS)
+        val latent = FloatArray(latentWidth * latentHeight * LATENT_CHANNELS)
         for (i in latent.indices) {
             latent[i] = random.nextFloat() * 2.0f - 1.0f
         }
@@ -188,23 +197,26 @@ class SdxlGenerationRunner {
         }
     }
 
+    // ★ latentWidth / latentHeight を引数で受け取るように変更
     private fun renderBitmapFromLatent(
         latent: FloatArray,
         width: Int,
         height: Int,
+        latentWidth: Int,
+        latentHeight: Int,
         guidanceScale: Float,
         promptSeed: Long
     ): Bitmap {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(width * height)
-        val plane = LATENT_WIDTH * LATENT_HEIGHT
+        val plane = latentWidth * latentHeight
         val gain = 0.65f + (guidanceScale / 16.0f)
 
         for (y in 0 until height) {
-            val latentY = y * LATENT_HEIGHT / height
+            val ly = y * latentHeight / height
             for (x in 0 until width) {
-                val latentX = x * LATENT_WIDTH / width
-                val index = latentY * LATENT_WIDTH + latentX
+                val lx = x * latentWidth / width
+                val index = ly * latentWidth + lx
 
                 val r = latent[index]
                 val g = latent[plane + index]
