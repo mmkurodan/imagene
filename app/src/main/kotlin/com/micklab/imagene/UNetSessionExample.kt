@@ -9,31 +9,25 @@ import ai.onnxruntime.OrtSession.SessionOptions.ExecutionMode
 import android.util.Log
 import java.io.File
 import java.nio.FloatBuffer
+import kotlin.math.sqrt
 
-/**
- * Example class demonstrating how to load and run UNet model with ONNX Runtime.
- * Uses createSession() to load from external storage path.
- */
 class UNetSessionExample : AutoCloseable {
-    
+
     companion object {
         private const val TAG = "UNetSessionExample"
         private const val NNAPI_THREADS = 4
         private const val CPU_FALLBACK_THREADS = 2
+
         private val ortEnvironment: OrtEnvironment by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
             OrtEnvironment.getEnvironment()
         }
     }
-    
+
     private var unetSession: OrtSession? = null
     private var activeSessionOptions: SessionOptions? = null
     private val auxiliarySessions = linkedMapOf<String, OrtSession>()
     private val auxiliarySessionOptions = linkedMapOf<String, SessionOptions>()
-    
-    /**
-     * Initialize ONNX Runtime environment and load UNet model.
-     * @throws Exception if model loading fails
-     */
+
     fun initialize() {
         closeSession()
         val unetModelPath = SdxlModelLoader.getOnnxModelPath("unet")
@@ -100,36 +94,26 @@ class UNetSessionExample : AutoCloseable {
             null
         }
     }
-    
-    /**
-     * Log model input/output information for debugging.
-     */
+
     private fun logModelInfo() {
         unetSession?.let { session ->
             Log.i(TAG, "=== UNet Model Info ===")
-            
-            // Log input names and shapes
             Log.i(TAG, "Inputs:")
             for ((name, info) in session.inputInfo) {
                 Log.i(TAG, "  $name: ${info.info}")
             }
-            
-            // Log output names and shapes
             Log.i(TAG, "Outputs:")
             for ((name, info) in session.outputInfo) {
                 Log.i(TAG, "  $name: ${info.info}")
             }
         }
     }
-    
+
     /**
-     * Run UNet inference.
-     * This is a simplified example - actual SD15 UNet has complex inputs.
-     * 
-     * @param sample Latent sample tensor [batch, channels, height, width]
-     * @param timestep Current timestep value
-     * @param encoderHiddenStates Text encoder output [batch, seq_len, hidden_dim]
-     * @return Output latent tensor
+     * SD15 UNet 推論
+     * sample: [1,4,H/8,W/8]
+     * timestep: float32
+     * encoderHiddenStates: [1,77,768]
      */
     fun runInference(
         sample: FloatArray,
@@ -137,27 +121,31 @@ class UNetSessionExample : AutoCloseable {
         encoderHiddenStates: FloatArray
     ): FloatArray {
         val session = unetSession ?: throw IllegalStateException("UNet session not initialized")
-        
-        // Example dimensions (actual SD15 uses different sizes)
+
         val batchSize = 1
         val channels = 4
-        val height = 128  // Latent height (1024 / 8)
-        val width = 128   // Latent width (1024 / 8)
+
+        // ★ sample の長さから latent の高さ・幅を自動推定
+        val spatial = sample.size / (batchSize * channels)
+        val side = sqrt(spatial.toDouble()).toInt()
+        val height = side
+        val width = side
+
         val seqLen = 77
         val hiddenDim = 768
-        
-        // Create input tensors
+
         val sampleTensor = OnnxTensor.createTensor(
             ortEnvironment,
             FloatBuffer.wrap(sample),
             longArrayOf(batchSize.toLong(), channels.toLong(), height.toLong(), width.toLong())
         )
-        
+
         val timestepTensor = OnnxTensor.createTensor(
             ortEnvironment,
-            floatArrayOf(timestep)
+            floatArrayOf(timestep),
+            longArrayOf(1)
         )
-        
+
         val encoderTensor = OnnxTensor.createTensor(
             ortEnvironment,
             FloatBuffer.wrap(encoderHiddenStates),
@@ -173,8 +161,8 @@ class UNetSessionExample : AutoCloseable {
             val results = session.run(inputs)
             try {
                 val outputTensor = results[0] as OnnxTensor
-                val outputBuffer = outputTensor.floatBuffer
-                FloatArray(outputBuffer.remaining()).also { outputBuffer.get(it) }
+                val buf = outputTensor.floatBuffer
+                FloatArray(buf.remaining()).also { buf.get(it) }
             } finally {
                 results.close()
             }
@@ -184,23 +172,15 @@ class UNetSessionExample : AutoCloseable {
             encoderTensor.close()
         }
     }
-    
-    /**
-     * Alternative: Load model with custom session options for memory optimization.
-     */
+
     fun initializeWithMemoryOptimization() {
         closeSession()
         val sessionOptions = SessionOptions().apply {
-            // Enable memory pattern optimization
             setMemoryPatternOptimization(true)
-            
-            // Set execution mode to sequential for lower memory
             setExecutionMode(ExecutionMode.SEQUENTIAL)
-            
-            // Optimization level
             setOptimizationLevel(OptLevel.ALL_OPT)
         }
-        
+
         val unetModelPath = SdxlModelLoader.getOnnxModelPath("unet")
         try {
             unetSession = ortEnvironment.createSession(unetModelPath, sessionOptions)
@@ -210,22 +190,16 @@ class UNetSessionExample : AutoCloseable {
             throw e
         }
     }
-    
-    /**
-     * Alternative: Load all SD15 components.
-     * Shows how to load multiple models from external storage.
-     */
+
     fun loadAllComponents(): Map<String, OrtSession> {
         val env = ortEnvironment
         val components = listOf(
             "unet",
             "text_encoder",
-            "text_encoder_2", 
             "vae_decoder"
         )
-        
-        val sessions = mutableMapOf<String, OrtSession>()
 
+        val sessions = mutableMapOf<String, OrtSession>()
         closeAuxiliarySessions()
 
         try {
@@ -251,7 +225,7 @@ class UNetSessionExample : AutoCloseable {
             closeAuxiliarySessions()
             throw e
         }
-        
+
         return sessions
     }
 
@@ -269,7 +243,7 @@ class UNetSessionExample : AutoCloseable {
         activeSessionOptions = null
         closeAuxiliarySessions()
     }
-    
+
     override fun close() {
         closeSession()
         Log.i(TAG, "UNet session closed")
