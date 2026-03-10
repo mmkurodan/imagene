@@ -52,16 +52,14 @@ class UNetSessionExample : AutoCloseable {
         logModelInfo()
     }
 
+    /**
+     * ★ NNAPI を完全に無効化し、CPU のみでセッションを作成する
+     */
     private fun createSessionWithFallback(unetModelPath: String): OrtSession {
         val failures = mutableListOf<String>()
 
-        createSession(unetModelPath, "NNAPI acceleration", failures) {
-            setOptimizationLevel(OptLevel.ALL_OPT)
-            setIntraOpNumThreads(NNAPI_THREADS)
-            addNnapi()
-        }?.let { return it }
-
-        createSession(unetModelPath, "CPU fallback", failures) {
+        // CPU のみ
+        createSession(unetModelPath, "CPU only", failures) {
             setExecutionMode(ExecutionMode.SEQUENTIAL)
             setOptimizationLevel(OptLevel.BASIC_OPT)
             setIntraOpNumThreads(CPU_FALLBACK_THREADS)
@@ -111,9 +109,6 @@ class UNetSessionExample : AutoCloseable {
 
     /**
      * SD15 UNet 推論
-     * sample: [1,4,H/8,W/8]
-     * timestep: float32
-     * encoderHiddenStates: [1,77,768]
      */
     fun runInference(
         sample: FloatArray,
@@ -142,7 +137,7 @@ class UNetSessionExample : AutoCloseable {
 
         val timestepTensor = OnnxTensor.createTensor(
             ortEnvironment,
-            FloatBuffer.wrap(floatArrayOf(timestep)),
+            floatArrayOf(timestep),
             longArrayOf(1)
         )
 
