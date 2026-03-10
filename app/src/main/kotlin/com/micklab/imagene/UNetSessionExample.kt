@@ -142,7 +142,7 @@ class UNetSessionExample : AutoCloseable {
 
         val timestepTensor = OnnxTensor.createTensor(
             ortEnvironment,
-            floatArrayOf(timestep),
+            FloatBuffer.wrap(floatArrayOf(timestep)),
             longArrayOf(1)
         )
 
