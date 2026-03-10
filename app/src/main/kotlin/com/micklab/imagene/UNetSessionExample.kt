@@ -133,7 +133,7 @@ class UNetSessionExample : AutoCloseable {
      */
     fun runInference(
         sample: FloatArray,
-        timestep: Long,
+        timestep: Float,
         encoderHiddenStates: FloatArray
     ): FloatArray {
         val session = unetSession ?: throw IllegalStateException("UNet session not initialized")
@@ -155,7 +155,7 @@ class UNetSessionExample : AutoCloseable {
         
         val timestepTensor = OnnxTensor.createTensor(
             ortEnvironment,
-            longArrayOf(timestep)
+            floatArrayOf(timestep)
         )
         
         val encoderTensor = OnnxTensor.createTensor(

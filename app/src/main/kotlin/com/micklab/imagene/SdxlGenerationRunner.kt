@@ -108,7 +108,7 @@ class SdxlGenerationRunner {
             val encoderStates = buildEncoderStates(request, promptSeed)
             val prediction = unet.runInference(
                 sample = latent.copyOf(),
-                timestep = request.steps.toLong(),
+                timestep = request.steps.toFloat(),
                 encoderHiddenStates = encoderStates
             )
             blendLatentWithPrediction(latent, prediction, request.guidanceScale)
