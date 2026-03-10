@@ -5,7 +5,8 @@ import android.net.Uri
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.IOException
-import java.util.zip.ZipInputStream
+import java.io.InputStream
+import java.util.zip.GZIPInputStream
 
 data class ModelImportResult(
     val extractedFiles: Int,
@@ -16,8 +17,9 @@ object SdxlModelArchiveImporter {
 
     private const val TAG = "SdxlModelArchiveImporter"
     private const val BUFFER_SIZE = 64 * 1024
+    private const val TAR_BLOCK_SIZE = 512
 
-    fun importFromZip(context: Context, archiveUri: Uri): ModelImportResult {
+    fun importFromTarGz(context: Context, archiveUri: Uri): ModelImportResult {
         SdxlModelLoader.initialize(context)
 
         val targetDir = SdxlModelLoader.getModelBaseDir()
@@ -37,14 +39,14 @@ object SdxlModelArchiveImporter {
         try {
             val extractedFiles = extractArchive(context, archiveUri, pathPrefix, stagingDir)
             if (extractedFiles == 0) {
-                throw IllegalStateException("ZIP に展開できるファイルがありません。")
+                throw IllegalStateException("tar.gz に展開できるファイルがありません。")
             }
 
             val missingRequiredFiles = SdxlModelLoader.getRequiredRuntimeFiles()
                 .filterNot { File(stagingDir, it).isFile }
             if (missingRequiredFiles.isNotEmpty()) {
                 throw IllegalStateException(
-                    "ZIP に必要なファイルが含まれていません: ${missingRequiredFiles.joinToString(", ")}"
+                    "tar.gz に必要なファイルが含まれていません: ${missingRequiredFiles.joinToString(", ")}"
                 )
             }
 
@@ -58,7 +60,7 @@ object SdxlModelArchiveImporter {
             )
             return ModelImportResult(extractedFiles = extractedFiles, destinationDir = targetDir)
         } catch (e: Exception) {
-            AppLogStore.e(TAG, "Failed to import model ZIP from $archiveUri", e)
+            AppLogStore.e(TAG, "Failed to import model tar.gz from $archiveUri", e)
             restoreBackup(targetDir, backupDir)
             throw e
         } finally {
@@ -71,15 +73,23 @@ object SdxlModelArchiveImporter {
         }
     }
 
+    fun resetModelDirectory(context: Context): File {
+        SdxlModelLoader.initialize(context)
+        val targetDir = SdxlModelLoader.getModelBaseDir()
+        if (targetDir.exists() && !targetDir.deleteRecursively()) {
+            throw IOException("Failed to clear model directory: ${targetDir.absolutePath}")
+        }
+        AppLogStore.i(TAG, "Reset model directory: ${targetDir.absolutePath}")
+        return targetDir
+    }
+
     private fun determineArchivePrefix(context: Context, archiveUri: Uri): List<String> {
         val entrySegments = mutableListOf<List<String>>()
-        openZipInputStream(context, archiveUri).use { zipInput ->
-            while (true) {
-                val entry = zipInput.nextEntry ?: break
-                if (!entry.isDirectory) {
+        openTarGzInputStream(context, archiveUri).use { tarInput ->
+            iterateTarEntries(tarInput) { entry, _ ->
+                if (entry.isRegularFile) {
                     entrySegments += normalizeEntrySegments(entry.name)
                 }
-                zipInput.closeEntry()
             }
         }
 
@@ -110,9 +120,12 @@ object SdxlModelArchiveImporter {
     ): Int {
         var extractedFiles = 0
 
-        openZipInputStream(context, archiveUri).use { zipInput ->
-            while (true) {
-                val entry = zipInput.nextEntry ?: break
+        openTarGzInputStream(context, archiveUri).use { tarInput ->
+            iterateTarEntries(tarInput) { entry, entryInput ->
+                if (!entry.isDirectory && !entry.isRegularFile) {
+                    return@iterateTarEntries
+                }
+
                 val entrySegments = normalizeEntrySegments(entry.name)
                 val relativeSegments = stripPrefix(entrySegments, pathPrefix)
 
@@ -128,17 +141,142 @@ object SdxlModelArchiveImporter {
                             throw IOException("Failed to create directory: ${parent.absolutePath}")
                         }
                         destination.outputStream().buffered().use { output ->
-                            zipInput.copyTo(output, BUFFER_SIZE)
+                            entryInput.copyTo(output, BUFFER_SIZE)
                         }
                         extractedFiles += 1
                     }
                 }
-
-                zipInput.closeEntry()
             }
         }
 
         return extractedFiles
+    }
+
+    private data class TarEntry(
+        val name: String,
+        val size: Long,
+        val typeFlag: Char
+    ) {
+        val isDirectory: Boolean
+            get() = typeFlag == '5' || name.endsWith("/")
+
+        val isRegularFile: Boolean
+            get() = typeFlag == '0' || typeFlag == '\u0000'
+    }
+
+    private class TarEntryInputStream(
+        private val source: InputStream,
+        private val size: Long
+    ) : InputStream() {
+        private var consumed: Long = 0L
+
+        override fun read(): Int {
+            if (consumed >= size) return -1
+            val value = source.read()
+            if (value == -1) {
+                throw IOException("tar.gz が途中で終了しています。")
+            }
+            consumed += 1
+            return value
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            if (consumed >= size) return -1
+            val toRead = minOf(length.toLong(), size - consumed).toInt()
+            val count = source.read(buffer, offset, toRead)
+            if (count == -1) {
+                throw IOException("tar.gz が途中で終了しています。")
+            }
+            consumed += count.toLong()
+            return count
+        }
+
+        fun skipRemaining() {
+            var remaining = size - consumed
+            while (remaining > 0) {
+                val skipped = source.skip(remaining)
+                if (skipped > 0) {
+                    remaining -= skipped
+                } else {
+                    val value = source.read()
+                    if (value == -1) {
+                        throw IOException("tar.gz が途中で終了しています。")
+                    }
+                    remaining -= 1
+                }
+            }
+            consumed = size
+        }
+    }
+
+    private fun iterateTarEntries(
+        tarInput: InputStream,
+        onEntry: (TarEntry, TarEntryInputStream) -> Unit
+    ) {
+        val header = ByteArray(TAR_BLOCK_SIZE)
+        while (readBlockOrEof(tarInput, header)) {
+            if (header.all { it.toInt() == 0 }) {
+                return
+            }
+
+            val entry = parseTarEntry(header)
+            val entryInput = TarEntryInputStream(tarInput, entry.size)
+            onEntry(entry, entryInput)
+            entryInput.skipRemaining()
+
+            val padding = ((TAR_BLOCK_SIZE - (entry.size % TAR_BLOCK_SIZE)) % TAR_BLOCK_SIZE).toInt()
+            if (padding > 0) {
+                skipFully(tarInput, padding.toLong())
+            }
+        }
+    }
+
+    private fun readBlockOrEof(input: InputStream, buffer: ByteArray): Boolean {
+        var offset = 0
+        while (offset < buffer.size) {
+            val read = input.read(buffer, offset, buffer.size - offset)
+            if (read == -1) {
+                if (offset == 0) {
+                    return false
+                }
+                throw IOException("tar.gz ヘッダーが途中で終了しています。")
+            }
+            offset += read
+        }
+        return true
+    }
+
+    private fun parseTarEntry(header: ByteArray): TarEntry {
+        val name = readTarString(header, 0, 100)
+        val prefix = readTarString(header, 345, 155)
+        val fullName = when {
+            prefix.isNotBlank() && name.isNotBlank() -> "$prefix/$name"
+            prefix.isNotBlank() -> prefix
+            else -> name
+        }
+        if (fullName.isBlank()) {
+            throw IOException("tar.gz 内に不正なエントリ名が含まれています。")
+        }
+
+        val size = parseTarSize(header, 124, 12)
+        val typeRaw = header[156].toInt() and 0xff
+        val typeFlag = if (typeRaw == 0) '\u0000' else typeRaw.toChar()
+        return TarEntry(name = fullName, size = size, typeFlag = typeFlag)
+    }
+
+    private fun readTarString(header: ByteArray, offset: Int, length: Int): String {
+        val end = (offset until (offset + length))
+            .firstOrNull { header[it].toInt() == 0 } ?: (offset + length)
+        return String(header, offset, end - offset, Charsets.US_ASCII).trim()
+    }
+
+    private fun parseTarSize(header: ByteArray, offset: Int, length: Int): Long {
+        val value = readTarString(header, offset, length)
+        if (value.isBlank()) {
+            return 0L
+        }
+        return value.toLongOrNull(radix = 8)
+            ?: throw IOException("tar.gz 内に不正なサイズが含まれています: $value")
     }
 
     private fun backupExistingDirectory(targetDir: File): File? {
@@ -191,10 +329,10 @@ object SdxlModelArchiveImporter {
         }
     }
 
-    private fun openZipInputStream(context: Context, archiveUri: Uri): ZipInputStream {
+    private fun openTarGzInputStream(context: Context, archiveUri: Uri): InputStream {
         val inputStream = context.contentResolver.openInputStream(archiveUri)
-            ?: throw IOException("ZIP ファイルを開けませんでした。")
-        return ZipInputStream(BufferedInputStream(inputStream))
+            ?: throw IOException("tar.gz ファイルを開けませんでした。")
+        return GZIPInputStream(BufferedInputStream(inputStream), BUFFER_SIZE)
     }
 
     private fun normalizeEntrySegments(entryName: String): List<String> {
@@ -203,7 +341,7 @@ object SdxlModelArchiveImporter {
             .filter { it.isNotBlank() && it != "." }
             .also { segments ->
                 if (segments.any { it == ".." }) {
-                    throw IOException("ZIP 内に不正なパスが含まれています: $entryName")
+                    throw IOException("tar.gz 内に不正なパスが含まれています: $entryName")
                 }
             }
     }
@@ -228,7 +366,7 @@ object SdxlModelArchiveImporter {
         if (canonicalDestination.path != canonicalBase.path &&
             !canonicalDestination.path.startsWith(allowedPrefix)
         ) {
-            throw IOException("ZIP 内に不正な展開先が含まれています: ${destination.path}")
+            throw IOException("tar.gz 内に不正な展開先が含まれています: ${destination.path}")
         }
         return canonicalDestination
     }
@@ -243,5 +381,21 @@ object SdxlModelArchiveImporter {
             prefix += left[index]
         }
         return prefix
+    }
+
+    private fun skipFully(input: InputStream, byteCount: Long) {
+        var remaining = byteCount
+        while (remaining > 0) {
+            val skipped = input.skip(remaining)
+            if (skipped > 0) {
+                remaining -= skipped
+            } else {
+                val value = input.read()
+                if (value == -1) {
+                    throw IOException("tar.gz が途中で終了しています。")
+                }
+                remaining -= 1
+            }
+        }
     }
 }

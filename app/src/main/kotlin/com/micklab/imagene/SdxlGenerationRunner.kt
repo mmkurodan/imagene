@@ -25,7 +25,7 @@ data class GenerationResult(
 
 /**
  * Lightweight generation runner:
- * - Validates SDXL model location
+ * - Validates SD15 model location
  * - Attempts a UNet refinement pass via ONNX Runtime when possible
  * - Produces a deterministic image from latent space for UI preview
  */
@@ -37,7 +37,7 @@ class SdxlGenerationRunner {
         private const val LATENT_HEIGHT = 128
         private const val LATENT_CHANNELS = 4
         private const val ENCODER_SEQ_LEN = 77
-        private const val ENCODER_HIDDEN_SIZE = 2048
+        private const val ENCODER_HIDDEN_SIZE = 768
     }
 
     fun generate(

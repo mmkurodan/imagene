@@ -74,7 +74,7 @@ class GenerationActivity : AppCompatActivity() {
         }
 
         val title = TextView(this).apply {
-            text = "SDXL 画像生成"
+            text = "SD15 画像生成"
             textSize = 24f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER_HORIZONTAL

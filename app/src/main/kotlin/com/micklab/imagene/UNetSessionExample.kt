@@ -124,7 +124,7 @@ class UNetSessionExample : AutoCloseable {
     
     /**
      * Run UNet inference.
-     * This is a simplified example - actual SDXL UNet has complex inputs.
+     * This is a simplified example - actual SD15 UNet has complex inputs.
      * 
      * @param sample Latent sample tensor [batch, channels, height, width]
      * @param timestep Current timestep value
@@ -138,13 +138,13 @@ class UNetSessionExample : AutoCloseable {
     ): FloatArray {
         val session = unetSession ?: throw IllegalStateException("UNet session not initialized")
         
-        // Example dimensions (actual SDXL uses different sizes)
+        // Example dimensions (actual SD15 uses different sizes)
         val batchSize = 1
         val channels = 4
         val height = 128  // Latent height (1024 / 8)
         val width = 128   // Latent width (1024 / 8)
         val seqLen = 77
-        val hiddenDim = 2048
+        val hiddenDim = 768
         
         // Create input tensors
         val sampleTensor = OnnxTensor.createTensor(
@@ -212,7 +212,7 @@ class UNetSessionExample : AutoCloseable {
     }
     
     /**
-     * Alternative: Load all SDXL components.
+     * Alternative: Load all SD15 components.
      * Shows how to load multiple models from external storage.
      */
     fun loadAllComponents(): Map<String, OrtSession> {

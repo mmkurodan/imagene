@@ -21,8 +21,8 @@ import androidx.appcompat.app.AppCompatActivity
 import java.util.concurrent.Executors
 
 /**
- * Error screen displayed when SDXL model is not found.
- * Guides the user through importing a model ZIP into app-managed storage.
+ * Error screen displayed when SD15 model is not found.
+ * Guides the user through importing a model tar.gz into app-managed storage.
  */
 class ModelMissingActivity : AppCompatActivity() {
 
@@ -30,11 +30,20 @@ class ModelMissingActivity : AppCompatActivity() {
         private const val TAG = "ModelMissingActivity"
     }
 
+    private val archiveMimeTypes = arrayOf(
+        "application/gzip",
+        "application/x-gzip",
+        "application/tar",
+        "application/x-tar",
+        "application/octet-stream"
+    )
+
     private val importExecutor = Executors.newSingleThreadExecutor()
 
     private lateinit var importStatusText: TextView
     private lateinit var importProgressBar: ProgressBar
     private lateinit var importButton: Button
+    private lateinit var resetButton: Button
     private lateinit var retryButton: Button
     private lateinit var exitButton: Button
 
@@ -42,7 +51,7 @@ class ModelMissingActivity : AppCompatActivity() {
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) {
-            setImportStatus("ZIP の選択をキャンセルしました。", isError = false)
+            setImportStatus("tar.gz の選択をキャンセルしました。", isError = false)
             return@registerForActivityResult
         }
         startImport(uri)
@@ -61,12 +70,12 @@ class ModelMissingActivity : AppCompatActivity() {
         if (result.resultCode == Activity.RESULT_OK) {
             val uri = result.data?.data
             if (uri == null) {
-                setImportStatus("ZIP の選択をキャンセルしました。", isError = false)
+                setImportStatus("tar.gz の選択をキャンセルしました。", isError = false)
                 return@registerForActivityResult
             }
             startImport(uri)
         } else {
-            setImportStatus("ZIP の選択をキャンセルしました。", isError = false)
+            setImportStatus("tar.gz の選択をキャンセルしました。", isError = false)
         }
     }
 
@@ -109,7 +118,7 @@ class ModelMissingActivity : AppCompatActivity() {
         
         // Main message
         val message = TextView(this).apply {
-            text = "UNetランタイムモデルが見つかりませんでした。\nモデルZIPを選択すると、アプリ専用ストレージへ展開します。"
+            text = "UNetランタイムモデルが見つかりませんでした。\nモデルtar.gzを選択すると、アプリ専用ストレージへ展開します。"
             textSize = 16f
             setTextColor(Color.LTGRAY)
             gravity = Gravity.CENTER
@@ -132,7 +141,7 @@ class ModelMissingActivity : AppCompatActivity() {
         pathBox.addView(pathLabel)
         
         val pathText = TextView(this).apply {
-            text = "App external files / sdxl"
+            text = "App external files / sd15"
             textSize = 18f
             setTextColor(Color.parseColor("#4fc3f7"))
             typeface = Typeface.MONOSPACE
@@ -184,7 +193,7 @@ class ModelMissingActivity : AppCompatActivity() {
         mainLayout.addView(structureBox)
 
         val importNote = TextView(this).apply {
-            text = "公開 Downloads 直下のモデルは ONNX Runtime から開けない場合があるため、この画面からZIPを取り込んでください。"
+            text = "公開 Downloads 直下のモデルは ONNX Runtime から開けない場合があるため、この画面からtar.gzを取り込んでください。"
             textSize = 13f
             setTextColor(Color.GRAY)
             setPadding(0, 12, 0, 0)
@@ -192,7 +201,7 @@ class ModelMissingActivity : AppCompatActivity() {
         mainLayout.addView(importNote)
 
         val optionalNote = TextView(this).apply {
-            text = "現在のビルドでは model_index.json と text_encoder / text_encoder_2 / vae_decoder / tokenizer / tokenizer_2 / scheduler は起動条件ではありません。"
+            text = "現在のビルドでは model_index.json と text_encoder / vae_decoder / tokenizer / scheduler は起動条件ではありません。"
             textSize = 13f
             setTextColor(Color.GRAY)
             setPadding(0, 12, 0, 0)
@@ -250,7 +259,7 @@ class ModelMissingActivity : AppCompatActivity() {
         mainLayout.addView(importStatusText)
 
         importButton = Button(this).apply {
-            text = "モデルZIPを選択"
+            text = "モデルtar.gzを選択"
             textSize = 16f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#4fc3f7"))
@@ -264,6 +273,22 @@ class ModelMissingActivity : AppCompatActivity() {
             setOnClickListener { onImportClicked() }
         }
         mainLayout.addView(importButton)
+
+        resetButton = Button(this).apply {
+            text = "モデルをリセット"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#8e24aa"))
+            setPadding(48, 24, 48, 24)
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            params.setMargins(0, 0, 0, 16)
+            layoutParams = params
+            setOnClickListener { onResetClicked() }
+        }
+        mainLayout.addView(resetButton)
 
         retryButton = Button(this).apply {
             text = "再試行"
@@ -304,11 +329,7 @@ class ModelMissingActivity : AppCompatActivity() {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
-                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
-                    "application/zip",
-                    "application/x-zip-compressed",
-                    "application/octet-stream"
-                ))
+                putExtra(Intent.EXTRA_MIME_TYPES, archiveMimeTypes)
                 type = "*/*"
                 flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
             }
@@ -320,16 +341,16 @@ class ModelMissingActivity : AppCompatActivity() {
             if (intent.resolveActivity(packageManager) != null) {
                 openDocumentWithInitialUriLauncher.launch(intent)
             } else {
-                importZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
+                importZipLauncher.launch(archiveMimeTypes)
             }
         } catch (e: Exception) {
             AppLogStore.w(TAG, "Failed to open picker with initial URI: ${e.message}")
-            importZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
+            importZipLauncher.launch(archiveMimeTypes)
         }
     }
 
     private fun onImportClicked() {
-        AppLogStore.i(TAG, "Opening model ZIP picker")
+        AppLogStore.i(TAG, "Opening model tar.gz picker")
         // ACTION_OPEN_DOCUMENT grants access through the picker itself and does not require
         // READ_EXTERNAL_STORAGE. On Android 10–12 (API 29–32), request the permission as a hint
         // so the system can surface the Downloads folder more reliably.
@@ -343,7 +364,7 @@ class ModelMissingActivity : AppCompatActivity() {
     }
 
     private fun startImport(uri: Uri) {
-        AppLogStore.i(TAG, "Selected model ZIP: $uri")
+        AppLogStore.i(TAG, "Selected model tar.gz: $uri")
         try {
             contentResolver.takePersistableUriPermission(
                 uri,
@@ -354,11 +375,11 @@ class ModelMissingActivity : AppCompatActivity() {
         }
 
         setBusy(isBusy = true)
-        setImportStatus("モデルZIPを展開中...", isError = false)
+        setImportStatus("モデルtar.gzを展開中...", isError = false)
 
         importExecutor.execute {
             try {
-                val result = SdxlModelArchiveImporter.importFromZip(this, uri)
+                val result = SdxlModelArchiveImporter.importFromTarGz(this, uri)
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     setBusy(isBusy = false)
@@ -369,7 +390,34 @@ class ModelMissingActivity : AppCompatActivity() {
                     finish()
                 }
             } catch (e: Exception) {
-                val message = "ZIP の展開に失敗しました: ${e.message}"
+                val message = "tar.gz の展開に失敗しました: ${e.message}"
+                AppLogStore.e(TAG, message, e)
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    setBusy(isBusy = false)
+                    setImportStatus(message, isError = true)
+                }
+            }
+        }
+    }
+
+    private fun onResetClicked() {
+        AppLogStore.i(TAG, "Resetting model directory")
+        setBusy(isBusy = true)
+        setImportStatus("モデルをリセット中...", isError = false)
+
+        importExecutor.execute {
+            try {
+                val targetDir = SdxlModelArchiveImporter.resetModelDirectory(this)
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    setBusy(isBusy = false)
+                    val message = "モデルをリセットしました。tar.gz を再展開してください。\n${targetDir.absolutePath}"
+                    setImportStatus(message, isError = false)
+                    AppLogStore.i(TAG, message)
+                }
+            } catch (e: Exception) {
+                val message = "モデルのリセットに失敗しました: ${e.message}"
                 AppLogStore.e(TAG, message, e)
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread
@@ -386,7 +434,7 @@ class ModelMissingActivity : AppCompatActivity() {
             setResult(RESULT_OK)
             finish()
         } else {
-            val message = "必要なファイルがまだ見つかりません。ZIP を取り込むか、展開先を確認してください。"
+            val message = "必要なファイルがまだ見つかりません。tar.gz を取り込むか、展開先を確認してください。"
             AppLogStore.w(TAG, "Retry failed; missing components: ${SdxlModelLoader.getMissingComponents()}")
             setImportStatus(message, isError = true)
         }
@@ -394,6 +442,7 @@ class ModelMissingActivity : AppCompatActivity() {
 
     private fun setBusy(isBusy: Boolean) {
         importButton.isEnabled = !isBusy
+        resetButton.isEnabled = !isBusy
         retryButton.isEnabled = !isBusy
         exitButton.isEnabled = !isBusy
         importProgressBar.visibility = if (isBusy) View.VISIBLE else View.GONE

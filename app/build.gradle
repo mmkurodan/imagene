@@ -63,7 +63,7 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.activity:activity-ktx:1.8.2'
     
-    // Use the full Android runtime for better SDXL UNet operator compatibility
+    // Use the full Android runtime for better SD15 UNet operator compatibility
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.17.0'
     
     // JSON parsing for manifest

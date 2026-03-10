@@ -4,12 +4,12 @@ import android.content.Context
 import java.io.File
 
 /**
- * Resolves SDXL model paths inside app-managed storage.
+ * Resolves SD15 model paths inside app-managed storage.
  */
 object SdxlModelLoader {
 
     private const val TAG = "SdxlModelLoader"
-    private const val MODEL_DIRECTORY_NAME = "sdxl"
+    private const val MODEL_DIRECTORY_NAME = "sd15"
     private const val MODEL_INDEX_FILE = "model_index.json"
 
     /**
@@ -31,7 +31,7 @@ object SdxlModelLoader {
         val basePath = resolveModelBaseDir(applicationContext).absolutePath
         if (loggedBasePath != basePath) {
             loggedBasePath = basePath
-            AppLogStore.i(TAG, "Using SDXL model directory: $basePath")
+            AppLogStore.i(TAG, "Using SD15 model directory: $basePath")
         }
     }
 
@@ -72,7 +72,7 @@ object SdxlModelLoader {
             }
         }
 
-        AppLogStore.i(TAG, "All required SDXL runtime assets are available")
+        AppLogStore.i(TAG, "All required SD15 runtime assets are available")
         return true
     }
 

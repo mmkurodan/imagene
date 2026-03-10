@@ -12,7 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 
 /**
- * Main Activity for SDXL Image Generator.
+ * Main Activity for SD15 Image Generator.
  * Performs model existence check on startup and navigates to error screen if missing.
  */
 class MainActivity : AppCompatActivity() {
@@ -55,7 +55,7 @@ class MainActivity : AppCompatActivity() {
         
         // Title
         val title = TextView(this).apply {
-            text = "SDXL Image Generator"
+            text = "SD15 Image Generator"
             textSize = 24f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
