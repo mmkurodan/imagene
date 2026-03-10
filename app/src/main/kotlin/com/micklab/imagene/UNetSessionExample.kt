@@ -129,9 +129,12 @@ class UNetSessionExample : AutoCloseable {
         val seqLen = 77
         val hiddenDim = 768
 
+        val sampleByteBuffer = java.nio.ByteBuffer.allocateDirect(sample.size * 4).order(java.nio.ByteOrder.nativeOrder())
+        sampleByteBuffer.asFloatBuffer().put(sample)
+        sampleByteBuffer.rewind()
         val sampleTensor = OnnxTensor.createTensor(
             ortEnvironment,
-            FloatBuffer.wrap(sample),
+            sampleByteBuffer,
             longArrayOf(batchSize.toLong(), channels.toLong(), height.toLong(), width.toLong())
         )
 
