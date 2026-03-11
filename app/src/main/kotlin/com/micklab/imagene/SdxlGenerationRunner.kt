@@ -48,7 +48,9 @@ class SdxlGenerationRunner {
     private data class PromptSemanticScene(
         val subject: SemanticSubject,
         val background: SemanticBackground,
-        val subjectColor: Int
+        val subjectColor: Int,
+        val label: String? = null,
+        val fallbackSubject: Boolean = false
     )
 
     fun generate(
@@ -266,7 +268,10 @@ class SdxlGenerationRunner {
         promptSeed: Long
     ) {
         val scene = parsePromptSemanticScene(prompt, negativePrompt)
-        if (scene.subject == SemanticSubject.NONE && scene.background == SemanticBackground.NONE) {
+        if (scene.subject == SemanticSubject.NONE &&
+            scene.background == SemanticBackground.NONE &&
+            scene.label.isNullOrBlank()
+        ) {
             return
         }
 
@@ -280,44 +285,134 @@ class SdxlGenerationRunner {
         if (scene.subject != SemanticSubject.NONE) {
             drawSubjectOverlay(canvas, scene, width, height, subjectAlpha, promptSeed)
         }
+        if (scene.fallbackSubject) {
+            scene.label?.takeIf { it.isNotBlank() }?.let { label ->
+                drawPromptLabelBadge(canvas, label, width, height, subjectAlpha)
+            }
+        }
     }
 
     private fun parsePromptSemanticScene(prompt: String, negativePrompt: String): PromptSemanticScene {
         val positiveText = prompt.lowercase(Locale.ROOT)
         val negativeText = negativePrompt.lowercase(Locale.ROOT)
-        val subject = resolveSubject(positiveText, negativeText)
-        val background = resolveBackground(positiveText, subject)
+        val positiveTokens = tokenizePrompt(positiveText)
+        val negativeTokens = tokenizePrompt(negativeText)
+        val detectedSubject = resolveSubject(
+            positiveText = positiveText,
+            positiveTokens = positiveTokens.toSet(),
+            negativeText = negativeText,
+            negativeTokens = negativeTokens.toSet()
+        )
+        val label = selectPrimaryLabel(positiveTokens)
+        val subject = if (detectedSubject != SemanticSubject.NONE) {
+            detectedSubject
+        } else {
+            resolveFallbackSubject(label)
+        }
+        val background = resolveBackground(positiveText, positiveTokens.toSet(), subject)
         val subjectColor = resolveSubjectColor(positiveText, subject)
-        AppLogStore.i(TAG, "Semantic scene: subject=$subject, background=$background")
-        return PromptSemanticScene(subject = subject, background = background, subjectColor = subjectColor)
+        val fallbackSubject = detectedSubject == SemanticSubject.NONE && subject != SemanticSubject.NONE
+        AppLogStore.i(
+            TAG,
+            "Semantic scene: subject=$subject, background=$background, label=${label ?: "-"}, fallback=$fallbackSubject"
+        )
+        return PromptSemanticScene(
+            subject = subject,
+            background = background,
+            subjectColor = subjectColor,
+            label = label,
+            fallbackSubject = fallbackSubject
+        )
     }
 
-    private fun resolveSubject(positiveText: String, negativeText: String): SemanticSubject {
+    private fun resolveSubject(
+        positiveText: String,
+        positiveTokens: Set<String>,
+        negativeText: String,
+        negativeTokens: Set<String>
+    ): SemanticSubject {
         fun present(keywords: List<String>): Boolean =
-            containsAny(positiveText, keywords) && !containsAny(negativeText, keywords)
+            matchesKeywords(positiveText, positiveTokens, keywords) &&
+                !matchesKeywords(negativeText, negativeTokens, keywords)
 
         return when {
-            present(listOf("apple", "りんご", "林檎")) -> SemanticSubject.APPLE
-            present(listOf("flower", "rose", "sunflower", "花", "薔薇", "ひまわり")) -> SemanticSubject.FLOWER
-            present(listOf("mountain", "alps", "山", "富士")) -> SemanticSubject.MOUNTAIN
-            present(listOf("sun", "sunset", "sunrise", "太陽", "夕日", "朝日")) -> SemanticSubject.SUN
-            present(listOf("tree", "forest", "木", "森")) -> SemanticSubject.TREE
-            present(listOf("cat", "kitten", "猫", "ねこ")) -> SemanticSubject.CAT
-            present(listOf("house", "home", "building", "家", "建物")) -> SemanticSubject.HOUSE
+            present(listOf("apple", "apples", "りんご", "林檎", "fruit", "fruits", "果物")) -> SemanticSubject.APPLE
+            present(listOf("flower", "flowers", "rose", "roses", "tulip", "tulips", "sunflower", "sunflowers", "blossom", "花", "薔薇", "ひまわり", "チューリップ")) -> SemanticSubject.FLOWER
+            present(listOf("mountain", "mountains", "hill", "hills", "peak", "peaks", "volcano", "山", "富士", "火山")) -> SemanticSubject.MOUNTAIN
+            present(listOf("sun", "sunset", "sunrise", "solar", "太陽", "夕日", "朝日")) -> SemanticSubject.SUN
+            present(listOf("tree", "trees", "forest", "forests", "woods", "leaf", "leaves", "木", "森", "林")) -> SemanticSubject.TREE
+            present(listOf("cat", "cats", "kitten", "kittens", "dog", "dogs", "puppy", "puppies", "bird", "birds", "fox", "wolf", "lion", "tiger", "bear", "animal", "animals", "猫", "ねこ", "犬", "鳥", "動物")) -> SemanticSubject.CAT
+            present(listOf("house", "home", "building", "buildings", "city", "town", "village", "castle", "tower", "car", "cars", "train", "ship", "robot", "robots", "家", "建物", "都市", "街", "城", "車", "電車", "船", "ロボット")) -> SemanticSubject.HOUSE
             else -> SemanticSubject.NONE
         }
     }
 
-    private fun resolveBackground(positiveText: String, subject: SemanticSubject): SemanticBackground {
+    private fun resolveBackground(
+        positiveText: String,
+        positiveTokens: Set<String>,
+        subject: SemanticSubject
+    ): SemanticBackground {
         return when {
-            containsAny(positiveText, listOf("sunset", "dusk", "evening", "夕焼け", "夕日")) -> SemanticBackground.SUNSET
-            containsAny(positiveText, listOf("ocean", "sea", "beach", "海", "浜")) -> SemanticBackground.OCEAN
-            containsAny(positiveText, listOf("night", "space", "star", "moon", "夜", "宇宙", "月")) -> SemanticBackground.NIGHT
-            containsAny(positiveText, listOf("forest", "woods", "nature", "森", "木")) -> SemanticBackground.FOREST
+            matchesKeywords(positiveText, positiveTokens, listOf("sunset", "dusk", "evening", "sunrise", "夕焼け", "夕日")) -> SemanticBackground.SUNSET
+            matchesKeywords(positiveText, positiveTokens, listOf("ocean", "sea", "beach", "river", "lake", "海", "浜", "川", "湖")) -> SemanticBackground.OCEAN
+            matchesKeywords(positiveText, positiveTokens, listOf("night", "space", "star", "moon", "galaxy", "夜", "宇宙", "月", "星")) -> SemanticBackground.NIGHT
+            matchesKeywords(positiveText, positiveTokens, listOf("forest", "woods", "nature", "jungle", "森", "林", "木")) -> SemanticBackground.FOREST
+            matchesKeywords(positiveText, positiveTokens, listOf("sky", "cloud", "blue", "空", "雲")) -> SemanticBackground.SKY
             subject == SemanticSubject.MOUNTAIN || subject == SemanticSubject.TREE -> SemanticBackground.FOREST
             subject != SemanticSubject.NONE -> SemanticBackground.SKY
             else -> SemanticBackground.NONE
         }
+    }
+
+    private fun resolveFallbackSubject(label: String?): SemanticSubject {
+        if (label.isNullOrBlank()) return SemanticSubject.NONE
+        val fallbackSubjects = arrayOf(
+            SemanticSubject.FLOWER,
+            SemanticSubject.MOUNTAIN,
+            SemanticSubject.SUN,
+            SemanticSubject.TREE,
+            SemanticSubject.CAT,
+            SemanticSubject.HOUSE
+        )
+        val index = (label.hashCode() and Int.MAX_VALUE) % fallbackSubjects.size
+        return fallbackSubjects[index]
+    }
+
+    private fun selectPrimaryLabel(tokens: List<String>): String? {
+        val stopWords = setOf(
+            "a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "for", "from", "with", "by",
+            "is", "are", "was", "were", "image", "picture", "photo", "illustration", "drawing", "art",
+            "style", "cinematic", "realistic", "high", "quality", "ultra", "hd", "4k", "8k", "best",
+            "背景", "画像", "写真", "イラスト", "風景", "高品質", "最高"
+        )
+        val colorWords = setOf(
+            "red", "blue", "green", "yellow", "orange", "purple", "violet", "pink", "white", "black", "brown",
+            "赤", "青", "緑", "黄", "橙", "紫", "桃", "白", "黒", "茶"
+        )
+        return tokens.firstOrNull { token ->
+            val asciiWord = token.all { it in 'a'..'z' || it in '0'..'9' }
+            val meaningfulLength = !asciiWord || token.length >= 2
+            meaningfulLength && token !in stopWords && token !in colorWords
+        }
+    }
+
+    private fun tokenizePrompt(text: String): List<String> {
+        return text.lowercase(Locale.ROOT)
+            .split(Regex("[^a-z0-9ぁ-んァ-ヴー一-龯々]+"))
+            .filter { it.isNotBlank() }
+    }
+
+    private fun matchesKeywords(text: String, tokens: Set<String>, keywords: List<String>): Boolean {
+        for (keyword in keywords) {
+            val normalized = keyword.lowercase(Locale.ROOT)
+            val asciiKeyword = normalized.all { it in 'a'..'z' || it in '0'..'9' }
+            if (asciiKeyword) {
+                if (tokens.contains(normalized)) return true
+            } else if (text.contains(normalized)) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun resolveSubjectColor(positiveText: String, subject: SemanticSubject): Int {
@@ -419,6 +514,45 @@ class SdxlGenerationRunner {
             SemanticSubject.HOUSE -> drawHouse(canvas, centerX, centerY, width, height, scene.subjectColor, alpha)
             SemanticSubject.NONE -> Unit
         }
+    }
+
+    private fun drawPromptLabelBadge(
+        canvas: Canvas,
+        label: String,
+        width: Float,
+        height: Float,
+        alpha: Int
+    ) {
+        val displayLabel = label.take(18)
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = withAlpha(Color.WHITE, (alpha + 35).coerceIn(0, 255))
+            textAlign = Paint.Align.CENTER
+            textSize = minOf(width, height) * 0.08f
+        }
+        val metrics = textPaint.fontMetrics
+        val textHeight = metrics.descent - metrics.ascent
+        val horizontalPadding = textHeight * 0.65f
+        val verticalPadding = textHeight * 0.38f
+        val measuredWidth = textPaint.measureText(displayLabel)
+        val badgeWidth = (measuredWidth + horizontalPadding * 2f).coerceAtMost(width * 0.88f)
+        val badgeHeight = textHeight + verticalPadding * 1.8f
+        val left = (width - badgeWidth) / 2f
+        val top = height * 0.80f
+
+        val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = withAlpha(Color.rgb(24, 24, 32), (alpha - 20).coerceIn(90, 220))
+        }
+        canvas.drawRoundRect(
+            RectF(left, top, left + badgeWidth, top + badgeHeight),
+            badgeHeight * 0.45f,
+            badgeHeight * 0.45f,
+            badgePaint
+        )
+
+        val baseline = top + verticalPadding - metrics.ascent
+        canvas.drawText(displayLabel, width / 2f, baseline, textPaint)
     }
 
     private fun drawApple(
