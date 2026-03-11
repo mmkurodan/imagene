@@ -15,8 +15,7 @@ class UNetSessionExample : AutoCloseable {
 
     companion object {
         private const val TAG = "UNetSessionExample"
-        private const val NNAPI_THREADS = 4
-        private const val CPU_FALLBACK_THREADS = 2
+        private const val CPU_THREADS = 2
 
         private val ortEnvironment: OrtEnvironment by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
             OrtEnvironment.getEnvironment()
@@ -25,8 +24,6 @@ class UNetSessionExample : AutoCloseable {
 
     private var unetSession: OrtSession? = null
     private var activeSessionOptions: SessionOptions? = null
-    private val auxiliarySessions = linkedMapOf<String, OrtSession>()
-    private val auxiliarySessionOptions = linkedMapOf<String, SessionOptions>()
 
     fun initialize() {
         closeSession()
@@ -47,49 +44,27 @@ class UNetSessionExample : AutoCloseable {
         Log.i(TAG, "Initializing ONNX Runtime environment...")
         AppLogStore.i(TAG, "Loading UNet model from: $unetModelPath (${modelFile.length()} bytes)")
 
-        unetSession = createSessionWithFallback(unetModelPath)
+        unetSession = createCpuSession(unetModelPath)
         Log.i(TAG, "UNet model loaded successfully")
         logModelInfo()
     }
 
-    /**
-     * ★ NNAPI を完全に無効化し、CPU のみでセッションを作成する
-     */
-    private fun createSessionWithFallback(unetModelPath: String): OrtSession {
-        val failures = mutableListOf<String>()
-
-        // CPU のみ
-        createSession(unetModelPath, "CPU only", failures) {
+    private fun createCpuSession(unetModelPath: String): OrtSession {
+        val sessionOptions = SessionOptions().apply {
             setExecutionMode(ExecutionMode.SEQUENTIAL)
             setOptimizationLevel(OptLevel.BASIC_OPT)
-            setIntraOpNumThreads(CPU_FALLBACK_THREADS)
+            setIntraOpNumThreads(CPU_THREADS)
             setMemoryPatternOptimization(true)
-        }?.let { return it }
+        }
 
-        throw IllegalStateException(
-            "UNet session initialization failed: ${failures.joinToString(" | ")}"
-        )
-    }
-
-    private fun createSession(
-        unetModelPath: String,
-        label: String,
-        failures: MutableList<String>,
-        configure: SessionOptions.() -> Unit
-    ): OrtSession? {
-        val sessionOptions = SessionOptions()
         return try {
-            sessionOptions.configure()
             ortEnvironment.createSession(unetModelPath, sessionOptions).also {
                 activeSessionOptions = sessionOptions
-                AppLogStore.i(TAG, "UNet session created with $label")
+                AppLogStore.i(TAG, "UNet session created with CPU only")
             }
         } catch (e: Exception) {
-            val detail = "$label failed: ${e.message ?: e::class.java.simpleName}"
-            failures.add(detail)
-            AppLogStore.e(TAG, "Failed to create UNet session with $label", e)
             sessionOptions.close()
-            null
+            throw e
         }
     }
 
@@ -107,9 +82,6 @@ class UNetSessionExample : AutoCloseable {
         }
     }
 
-    /**
-     * SD15 UNet 推論
-     */
     fun runInference(
         sample: FloatArray,
         timestep: Float,
@@ -129,12 +101,14 @@ class UNetSessionExample : AutoCloseable {
         val seqLen = 77
         val hiddenDim = 768
 
-        val sampleByteBuffer = java.nio.ByteBuffer.allocateDirect(sample.size * 4).order(java.nio.ByteOrder.nativeOrder())
-        sampleByteBuffer.asFloatBuffer().put(sample)
-        sampleByteBuffer.rewind()
+        val sampleBuffer = java.nio.ByteBuffer.allocateDirect(sample.size * 4)
+            .order(java.nio.ByteOrder.nativeOrder())
+        sampleBuffer.asFloatBuffer().put(sample)
+        sampleBuffer.rewind()
+
         val sampleTensor = OnnxTensor.createTensor(
             ortEnvironment,
-            sampleByteBuffer,
+            sampleBuffer,
             longArrayOf(batchSize.toLong(), channels.toLong(), height.toLong(), width.toLong())
         )
 
@@ -171,75 +145,11 @@ class UNetSessionExample : AutoCloseable {
         }
     }
 
-    fun initializeWithMemoryOptimization() {
-        closeSession()
-        val sessionOptions = SessionOptions().apply {
-            setMemoryPatternOptimization(true)
-            setExecutionMode(ExecutionMode.SEQUENTIAL)
-            setOptimizationLevel(OptLevel.ALL_OPT)
-        }
-
-        val unetModelPath = SdxlModelLoader.getOnnxModelPath("unet")
-        try {
-            unetSession = ortEnvironment.createSession(unetModelPath, sessionOptions)
-            activeSessionOptions = sessionOptions
-        } catch (e: Exception) {
-            sessionOptions.close()
-            throw e
-        }
-    }
-
-    fun loadAllComponents(): Map<String, OrtSession> {
-        val env = ortEnvironment
-        val components = listOf(
-            "unet",
-            "text_encoder",
-            "vae_decoder"
-        )
-
-        val sessions = mutableMapOf<String, OrtSession>()
-        closeAuxiliarySessions()
-
-        try {
-            for (component in components) {
-                val modelPath = SdxlModelLoader.getOnnxModelPath(component)
-                Log.i(TAG, "Loading $component from: $modelPath")
-
-                val componentOptions = SessionOptions().apply {
-                    setOptimizationLevel(OptLevel.ALL_OPT)
-                }
-                try {
-                    val session = env.createSession(modelPath, componentOptions)
-                    auxiliarySessions[component] = session
-                    auxiliarySessionOptions[component] = componentOptions
-                    sessions[component] = session
-                    Log.i(TAG, "$component loaded successfully")
-                } catch (e: Exception) {
-                    componentOptions.close()
-                    throw e
-                }
-            }
-        } catch (e: Exception) {
-            closeAuxiliarySessions()
-            throw e
-        }
-
-        return sessions
-    }
-
-    private fun closeAuxiliarySessions() {
-        auxiliarySessions.values.forEach { it.close() }
-        auxiliarySessions.clear()
-        auxiliarySessionOptions.values.forEach { it.close() }
-        auxiliarySessionOptions.clear()
-    }
-
     private fun closeSession() {
         unetSession?.close()
         unetSession = null
         activeSessionOptions?.close()
         activeSessionOptions = null
-        closeAuxiliarySessions()
     }
 
     override fun close() {

@@ -51,29 +51,24 @@ class SdxlGenerationRunner {
         val total = steps + 2
         val promptSeed = computePromptSeed(request)
 
-        // ★ SD15 latent サイズを width/8, height/8 から計算
+        // ★ SD15 latent サイズ
         val latentWidth = width / 8
         val latentHeight = height / 8
 
         onProgress(0, total, "モデルを初期化中...")
-        if (isCancelled()) {
-            throw CancellationException("Generation cancelled before start")
-        }
+        if (isCancelled()) throw CancellationException("Generation cancelled before start")
 
         val latent = createInitialLatent(promptSeed, latentWidth, latentHeight)
         val refinementWarning = runUnetRefinement(latent, request, promptSeed)
 
         for (step in 1..steps) {
-            if (isCancelled()) {
-                throw CancellationException("Generation cancelled")
-            }
+            if (isCancelled()) throw CancellationException("Generation cancelled")
             applyPseudoDiffusion(latent, step, steps, guidanceScale, promptSeed)
             onProgress(step, total, "生成中... ($step/$steps)")
         }
 
-        if (isCancelled()) {
-            throw CancellationException("Generation cancelled before rendering")
-        }
+        if (isCancelled()) throw CancellationException("Generation cancelled before rendering")
+
         onProgress(steps + 1, total, "画像をレンダリング中...")
         val bitmap = renderBitmapFromLatent(
             latent = latent,
@@ -84,6 +79,7 @@ class SdxlGenerationRunner {
             guidanceScale = guidanceScale,
             promptSeed = promptSeed
         )
+
         onProgress(total, total, "生成完了")
 
         AppLogStore.i(
@@ -118,16 +114,8 @@ class SdxlGenerationRunner {
             blendLatentWithPrediction(latent, prediction, request.guidanceScale)
             AppLogStore.i(TAG, "UNet refinement pass succeeded")
             null
-        } catch (e: OrtException) {
+        } catch (e: Exception) {
             val warning = "UNet推論を実行できなかったため軽量生成で続行しました。(${e.message})"
-            AppLogStore.e(TAG, warning, e)
-            warning
-        } catch (e: IllegalStateException) {
-            val warning = "UNet初期化に失敗したため軽量生成で続行しました。(${e.message})"
-            AppLogStore.e(TAG, warning, e)
-            warning
-        } catch (e: IllegalArgumentException) {
-            val warning = "UNet入力の解釈に失敗したため軽量生成で続行しました。(${e.message})"
             AppLogStore.e(TAG, warning, e)
             warning
         } finally {
@@ -135,7 +123,6 @@ class SdxlGenerationRunner {
         }
     }
 
-    // ★ latentWidth / latentHeight を引数で受け取るように変更
     private fun createInitialLatent(
         promptSeed: Long,
         latentWidth: Int,
@@ -197,7 +184,6 @@ class SdxlGenerationRunner {
         }
     }
 
-    // ★ latentWidth / latentHeight を引数で受け取るように変更
     private fun renderBitmapFromLatent(
         latent: FloatArray,
         width: Int,
