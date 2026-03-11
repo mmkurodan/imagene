@@ -8,7 +8,8 @@ import ai.onnxruntime.OrtSession.SessionOptions.OptLevel
 import ai.onnxruntime.OrtSession.SessionOptions.ExecutionMode
 import android.util.Log
 import java.io.File
-import java.nio.FloatBuffer
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class UNetSessionExample : AutoCloseable {
 
@@ -105,25 +106,52 @@ class UNetSessionExample : AutoCloseable {
             "encoder_hidden_states size (${encoderHiddenStates.size}) does not match shape [1, $seqLen, $hiddenDim] ($expectedEncoderSize)"
         }
 
+        AppLogStore.i(
+            TAG,
+            "Preparing UNet tensors (sample=${sample.size}, encoder=${encoderHiddenStates.size}, shape=[1,$channels,$latentHeight,$latentWidth])"
+        )
+        val sampleData = ByteBuffer.allocateDirect(sample.size * java.lang.Float.BYTES)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .apply {
+                put(sample)
+                rewind()
+            }
+        val timestepData = ByteBuffer.allocateDirect(java.lang.Float.BYTES)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .apply {
+                put(timestep)
+                rewind()
+            }
+        val encoderData = ByteBuffer.allocateDirect(encoderHiddenStates.size * java.lang.Float.BYTES)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .apply {
+                put(encoderHiddenStates)
+                rewind()
+            }
+
         val sampleTensor = OnnxTensor.createTensor(
             ortEnvironment,
-            FloatBuffer.wrap(sample),
+            sampleData,
             longArrayOf(batchSize.toLong(), channels.toLong(), latentHeight.toLong(), latentWidth.toLong())
         )
 
         val timestepTensor = OnnxTensor.createTensor(
             ortEnvironment,
-            FloatBuffer.wrap(floatArrayOf(timestep)),
+            timestepData,
             longArrayOf(1)
         )
 
         val encoderTensor = OnnxTensor.createTensor(
             ortEnvironment,
-            FloatBuffer.wrap(encoderHiddenStates),
+            encoderData,
             longArrayOf(batchSize.toLong(), seqLen.toLong(), hiddenDim.toLong())
         )
 
         return try {
+            AppLogStore.i(TAG, "Running UNet session")
             val inputs = mapOf(
                 "sample" to sampleTensor,
                 "timestep" to timestepTensor,
@@ -133,7 +161,10 @@ class UNetSessionExample : AutoCloseable {
             try {
                 val outputTensor = results[0] as OnnxTensor
                 val buf = outputTensor.floatBuffer
-                FloatArray(buf.remaining()).also { buf.get(it) }
+                FloatArray(buf.remaining()).also {
+                    buf.get(it)
+                    AppLogStore.i(TAG, "UNet session completed (output=${it.size})")
+                }
             } finally {
                 results.close()
             }

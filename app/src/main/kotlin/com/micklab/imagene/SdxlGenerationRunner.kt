@@ -115,6 +115,7 @@ class SdxlGenerationRunner {
         return try {
             unet.initialize()
             val encoderStates = buildEncoderStates(request, promptSeed)
+            AppLogStore.i(TAG, "Starting UNet refinement inference")
             val prediction = unet.runInference(
                 sample = latent.copyOf(),
                 timestep = request.steps.toFloat(),
