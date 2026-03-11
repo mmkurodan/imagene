@@ -9,7 +9,6 @@ import ai.onnxruntime.OrtSession.SessionOptions.ExecutionMode
 import android.util.Log
 import java.io.File
 import java.nio.FloatBuffer
-import kotlin.math.sqrt
 
 class UNetSessionExample : AutoCloseable {
 
@@ -85,31 +84,31 @@ class UNetSessionExample : AutoCloseable {
     fun runInference(
         sample: FloatArray,
         timestep: Float,
-        encoderHiddenStates: FloatArray
+        encoderHiddenStates: FloatArray,
+        latentWidth: Int,
+        latentHeight: Int
     ): FloatArray {
         val session = unetSession ?: throw IllegalStateException("UNet session not initialized")
 
         val batchSize = 1
         val channels = 4
-
-        // ★ sample の長さから latent の高さ・幅を自動推定
-        val spatial = sample.size / (batchSize * channels)
-        val side = sqrt(spatial.toDouble()).toInt()
-        val height = side
-        val width = side
-
         val seqLen = 77
         val hiddenDim = 768
 
-        val sampleBuffer = java.nio.ByteBuffer.allocateDirect(sample.size * 4)
-            .order(java.nio.ByteOrder.nativeOrder())
-        sampleBuffer.asFloatBuffer().put(sample)
-        sampleBuffer.rewind()
+        val expectedSampleSize = batchSize * channels * latentWidth * latentHeight
+        require(sample.size == expectedSampleSize) {
+            "sample size (${sample.size}) does not match shape [1, $channels, $latentHeight, $latentWidth] ($expectedSampleSize)"
+        }
+
+        val expectedEncoderSize = batchSize * seqLen * hiddenDim
+        require(encoderHiddenStates.size == expectedEncoderSize) {
+            "encoder_hidden_states size (${encoderHiddenStates.size}) does not match shape [1, $seqLen, $hiddenDim] ($expectedEncoderSize)"
+        }
 
         val sampleTensor = OnnxTensor.createTensor(
             ortEnvironment,
-            sampleBuffer,
-            longArrayOf(batchSize.toLong(), channels.toLong(), height.toLong(), width.toLong())
+            FloatBuffer.wrap(sample),
+            longArrayOf(batchSize.toLong(), channels.toLong(), latentHeight.toLong(), latentWidth.toLong())
         )
 
         val timestepTensor = OnnxTensor.createTensor(

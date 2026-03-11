@@ -66,7 +66,7 @@ class SdxlGenerationRunner {
             "latent size = ${latent.size}, latentWidth=$latentWidth, latentHeight=$latentHeight"
         )
 
-        val refinementWarning = runUnetRefinement(latent, request, promptSeed)
+        val refinementWarning = runUnetRefinement(latent, request, promptSeed, latentWidth, latentHeight)
 
         for (step in 1..steps) {
             if (isCancelled()) throw CancellationException("Generation cancelled")
@@ -100,7 +100,9 @@ class SdxlGenerationRunner {
     private fun runUnetRefinement(
         latent: FloatArray,
         request: GenerationRequest,
-        promptSeed: Long
+        promptSeed: Long,
+        latentWidth: Int,
+        latentHeight: Int
     ): String? {
         val unetFile = File(SdxlModelLoader.getOnnxModelPath("unet"))
         if (!unetFile.exists() || !unetFile.isFile) {
@@ -116,7 +118,9 @@ class SdxlGenerationRunner {
             val prediction = unet.runInference(
                 sample = latent.copyOf(),
                 timestep = request.steps.toFloat(),
-                encoderHiddenStates = encoderStates
+                encoderHiddenStates = encoderStates,
+                latentWidth = latentWidth,
+                latentHeight = latentHeight
             )
             blendLatentWithPrediction(latent, prediction, request.guidanceScale)
             AppLogStore.i(TAG, "UNet refinement pass succeeded")
