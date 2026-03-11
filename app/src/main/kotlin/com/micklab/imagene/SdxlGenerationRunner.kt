@@ -59,6 +59,13 @@ class SdxlGenerationRunner {
         if (isCancelled()) throw CancellationException("Generation cancelled before start")
 
         val latent = createInitialLatent(promptSeed, latentWidth, latentHeight)
+
+        // ★ ここで latent サイズをログ出力
+        AppLogStore.i(
+            TAG,
+            "latent size = ${latent.size}, latentWidth=$latentWidth, latentHeight=$latentHeight"
+        )
+
         val refinementWarning = runUnetRefinement(latent, request, promptSeed)
 
         for (step in 1..steps) {
