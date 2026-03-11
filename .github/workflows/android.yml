@@ -20,8 +20,11 @@ jobs:
     - name: Generate Gradle Wrapper (8.7)
       run: gradle wrapper --gradle-version 8.7
 
+    - name: Clean
+      run: ./gradlew clean
+
     - name: Build with Gradle
-      run: ./gradlew assembleDebug
+      run: ./gradlew assembleDebug --no-build-cache --rerun-tasks
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
